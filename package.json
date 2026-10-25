@@ -1,6 +1,6 @@
 {
   "name": "railguard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The agent loop that can't run away with your bill — budget guardrails, reliable structured output, typed tool calling, tenant-safe RAG. Zero runtime deps.",
   "type": "module",
   "main": "./dist/index.js",
