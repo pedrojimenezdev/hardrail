@@ -135,6 +135,24 @@ test("malformed tool arguments surface as a readable failure", async () => {
   assert.equal(noArgs.ok, true);
 });
 
+test("executeTool rejects valid JSON that doesn't match the tool's schema", async () => {
+  const double = defineTool<{ n: number }>({
+    name: "double",
+    description: "double a number",
+    parameters: { type: "object", properties: { n: { type: "number" } }, required: ["n"] },
+    run: ({ n }) => n * 2,
+  });
+
+  const wrongType = await executeTool([double], "double", '{"n":"21"}');
+  assert.equal(wrongType.ok, false);
+  assert.match(String(wrongType.result), /invalid arguments/);
+  assert.match(String(wrongType.result), /expected number, got string/);
+
+  const missingField = await executeTool([double], "double", "{}");
+  assert.equal(missingField.ok, false);
+  assert.match(String(missingField.result), /required property missing/);
+});
+
 test("budget records cost and retry backs off", async () => {
   const b = new Budget({ inputCostPerM: 1, outputCostPerM: 2 });
   b.record({ input: 1_000_000, output: 500_000 });
