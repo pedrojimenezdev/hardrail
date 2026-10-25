@@ -1,13 +1,16 @@
+import { validateSchema, type JSONSchema } from "./schema.ts";
+
 /**
  * Typed tool registry. Tools are the agent's hands — but the model hands them
- * *strings*, so the library never trusts the shape: it coerce-parses arguments
- * and lets a tool refuse cleanly.
+ * *strings*, so the library never trusts the shape: it coerce-parses arguments,
+ * validates them against the declared schema, and lets a tool refuse cleanly.
  */
 export interface Tool<TArgs = Record<string, unknown>, TResult = unknown> {
   name: string;
   description: string;
-  /** An example of the arguments (also used as the JSON schema for the LLM). */
-  parameters: Record<string, unknown>;
+  /** The JSON Schema for the arguments — sent to the LLM as the tool's
+   *  signature, and enforced against every call before `run` sees the args. */
+  parameters: JSONSchema;
   /** Runs the tool; thrown errors are surfaced to the agent as a failed call. */
   run: (args: TArgs) => Promise<TResult> | TResult;
 }
@@ -60,6 +63,13 @@ export async function executeTool(
   const parsed = parseToolArgumentsResult(rawArguments);
   if (!parsed.ok) {
     return { ok: false, result: `Tool ${name} received bad arguments: ${parsed.error}` };
+  }
+  // Catches what JSON.parse can't: a wrong type, a missing required field, a
+  // value outside an enum — the gap between "valid JSON" and "what the tool
+  // actually declared it needs".
+  const validation = validateSchema(tool.parameters, parsed.value);
+  if (!validation.ok) {
+    return { ok: false, result: `Tool ${name} received invalid arguments: ${validation.errors.join("; ")}` };
   }
   try {
     return { ok: true, result: await tool.run(parsed.value as never) };

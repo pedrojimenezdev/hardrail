@@ -15,6 +15,9 @@ export type { StructuredOptions, ParseSchema, Validator } from "./structured.ts"
 export { defineTool, executeTool, parseToolArguments, parseToolArgumentsResult, toolSchema } from "./tools.ts";
 export type { Tool, ToolArgumentsParse } from "./tools.ts";
 
+export { validateSchema } from "./schema.ts";
+export type { JSONSchema, SchemaValidation } from "./schema.ts";
+
 export { agent } from "./agent.ts";
 export type { AgentOptions } from "./agent.ts";
 

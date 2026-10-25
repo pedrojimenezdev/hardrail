@@ -18,6 +18,9 @@ that loops on a tool call turns into a four-figure invoice overnight, and a
 bounded by construction. Ask for JSON and you'll get prose, a markdown fence, or
 a field of the wrong type; `structured()` strips the wrapping, validates against
 your schema, and re-asks with the exact error until it parses or gives up loudly.
+A tool declares `{ n: number }` and the model sends `{ n: "21" }` — a type a `JSON.parse`
+can't catch; `executeTool` checks every call against the tool's own JSON Schema before
+`run()` ever sees it, and reports *what* was wrong so the model can correct the call.
 Multi-tenant retrieval leaks the moment isolation is a `.filter()` someone forgets,
 so `VectorStore.search(scope, …)` never sees another tenant's chunks in the first
 place. And provider lock-in is a rewrite you pay for later — one `LLM` interface
@@ -82,7 +85,8 @@ for await (const delta of llm.stream!([{ role: "user", content: "Write a haiku."
 |---|---|
 | `agent()` | The loop: system → model → execute tool calls → append → repeat, capped by `maxSteps` + `Budget` |
 | `structured()` | JSON out of an LLM, validated, self-corrected on miss (strip fences, re-ask with the error) |
-| `defineTool` / `executeTool` | Typed tool registry; the library never trusts model-supplied shapes |
+| `defineTool` / `executeTool` | Typed tool registry; the library never trusts model-supplied shapes — JSON validity *and* the declared JSON Schema are both enforced before `run()` sees a call |
+| `validateSchema` | The zero-dependency JSON Schema validator behind tool argument checking — usable standalone |
 | `rag` (`chunk`, `retrieve`, `inMemoryStore`, `groundPrompt`) | Pluggable vector store + deterministic chunker; search is scoped per tenant |
 | `Budget` / `retry` | Token + cost ceilings, exponential backoff with jitter |
 | `env` / `redact` | Type-safe env parsing with secret-stripping and redaction |

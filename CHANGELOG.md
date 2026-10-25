@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Tool argument schema validation.** `executeTool` now validates a tool call's
+  parsed arguments against the tool's own `parameters` JSON Schema before `run()`
+  is invoked, not just that the string was valid JSON. A wrong type, a missing
+  required field, or a value outside an `enum` now surfaces as a readable error
+  the model can self-correct from, the same way a malformed JSON string already
+  did. Exposed standalone as `validateSchema` / `JSONSchema` for use outside the
+  agent loop. Zero dependencies — the validator covers `type`, `properties`,
+  `required`, `items`, `enum`, `additionalProperties`, `minimum`/`maximum`,
+  `minLength`/`maxLength`, `pattern`, and `minItems`/`maxItems`.
+
 ## [0.1.0] - 2026-08-31
 
 First release under the `railguard` name.
