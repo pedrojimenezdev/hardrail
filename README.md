@@ -143,6 +143,20 @@ npm run build
 Node 22.6. On Node 20, use `npm run test:compiled`; CI runs it on every version
 in the matrix so the suite is genuinely verified against the oldest supported Node.
 
+### Branching & release
+
+- **`main`** is the released state of the package — every commit on it is
+  something that could be tagged and published to npm. Nothing is pushed to it
+  directly; it only moves forward via a PR from `dev`.
+- **`dev`** is the integration branch. Feature and fix branches open PRs against
+  `dev`, not `main`.
+- **The gate:** both branches require CI (`npm run typecheck`, the compiled test
+  suite, and `npm run build`, across Node 20 and 22) to pass before a PR can
+  merge — configured as required status checks in each branch's protection
+  rule, named `Node 20` and `Node 22`. A red check blocks the merge button.
+- Cut a release by opening a PR from `dev` into `main`; once it merges, tag and
+  publish from `main`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
