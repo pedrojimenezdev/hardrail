@@ -7,11 +7,11 @@
   "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pedrojimenezdev/railguard.git"
+    "url": "git+https://github.com/pedrojimenezdev/railguard-agentkit.git"
   },
-  "homepage": "https://github.com/pedrojimenezdev/railguard",
+  "homepage": "https://github.com/pedrojimenezdev/railguard-agentkit",
   "bugs": {
-    "url": "https://github.com/pedrojimenezdev/railguard/issues"
+    "url": "https://github.com/pedrojimenezdev/railguard-agentkit/issues"
   },
   "files": [
     "dist"
