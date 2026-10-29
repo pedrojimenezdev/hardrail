@@ -49,7 +49,7 @@ test("structured self-corrects once, then gives up", async () => {
 });
 
 /** A Zod-shaped schema — structurally compatible, but not Zod. The point is
- *  that railguard never imports a validation library. */
+ *  that hardrail never imports a validation library. */
 function fakeUserSchema(): {
   safeParse(v: unknown): { success: true; data: User } | { success: false; error: { message: string } };
 } {

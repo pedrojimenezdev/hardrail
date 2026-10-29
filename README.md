@@ -1,10 +1,10 @@
-# railguard
+# hardrail
 
 > **The agent loop that can't run away with your bill.**
 
-[![npm](https://img.shields.io/npm/v/railguard.svg)](https://www.npmjs.com/package/railguard)
+[![npm](https://img.shields.io/npm/v/hardrail.svg)](https://www.npmjs.com/package/hardrail)
 [![CI](https://github.com/pedrojimenezdev/railguard-agentkit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pedrojimenezdev/railguard-agentkit/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/railguard.svg)](LICENSE)
+[![license](https://img.shields.io/npm/l/hardrail.svg)](LICENSE)
 
 A small, dependency-free toolkit for building production AI agents in
 TypeScript — budget guardrails, reliable structured output, typed tool calling
@@ -42,7 +42,7 @@ Frameworks make the demo easy; production is where agents actually break.
 ## Quickstart
 
 ```ts
-import { createOpenAICompatible, agent, defineTool, Budget } from "railguard";
+import { createOpenAICompatible, agent, defineTool, Budget } from "hardrail";
 
 const llm = createOpenAICompatible({
   baseUrl: "https://api.deepseek.com", // or OpenRouter, vLLM, OpenAI…
@@ -68,10 +68,10 @@ console.log(answer); // → "6 times 7 is 42."
 ```
 
 Structured output with any Zod-compatible schema (Zod itself stays out of your
-dependency tree — `railguard` only needs `safeParse`):
+dependency tree — `hardrail` only needs `safeParse`):
 
 ```ts
-import { structured } from "railguard";
+import { structured } from "hardrail";
 import { z } from "zod";
 
 const profile = await structured(llm, {
@@ -145,16 +145,20 @@ for await (const delta of llm.stream!([{ role: "user", content: "Write a haiku."
 
 ## Install
 
-The `railguard` name on the npm registry belongs to an unrelated package, so
-install from GitHub, pinned to a release tag:
-
 ```bash
-npm i github:pedrojimenezdev/railguard-agentkit#v0.2.1
-pnpm add github:pedrojimenezdev/railguard-agentkit#v0.2.1
+npm i hardrail
 ```
 
-The `prepare` script compiles the package on install. Under pnpm 10, allow it
-with `"pnpm": { "onlyBuiltDependencies": ["railguard"] }`.
+Formerly `railguard`. That name on npm belongs to an unrelated package, so
+`npm i railguard` does **not** install this library.
+
+To install straight from GitHub instead, pin a release tag; the `prepare` script
+compiles the package on install (under pnpm 10, allow it with
+`"pnpm": { "onlyBuiltDependencies": ["hardrail"] }`):
+
+```bash
+npm i github:pedrojimenezdev/railguard-agentkit#v0.3.0
+```
 
 Requires Node.js 20 or newer. It ships both ES modules (`import`) and CommonJS
 (`require`), so CommonJS apps work on every Node 20 release, including the ones
