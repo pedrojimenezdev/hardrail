@@ -159,3 +159,15 @@ test("budget records cost and retry backs off", async () => {
   assert.equal(b.spent.cost, 2);
   b.check();
 });
+
+test("budget uses the billed cost when given, and check() throws once it is reached", () => {
+  const b = new Budget({ maxCostUsd: 0.05, inputCostPerM: 1, outputCostPerM: 2 });
+  b.record({ input: 1_000_000, output: 0, cost: 0.03 });
+  assert.equal(b.spent.cost, 0.03);
+  b.check();
+  b.record({ input: 10, output: 10, cost: 0.02 });
+  assert.throws(() => b.check(), /Budget exceeded: \$0\.0500 >= \$0\.05/);
+  const zero = new Budget({ inputCostPerM: 1, outputCostPerM: 2 });
+  zero.record({ input: 1_000_000, output: 0, cost: 0 });
+  assert.equal(zero.spent.cost, 0, "a reported cost of 0 is used, not replaced by the estimate");
+});
