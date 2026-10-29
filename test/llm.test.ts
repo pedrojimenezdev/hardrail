@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toAnthropicMessages } from "../src/llm.ts";
+import { createOpenAICompatible, toAnthropicMessages } from "../src/llm.ts";
 import type { ChatMessage } from "../src/llm.ts";
 
 test("toAnthropicMessages turns assistant tool calls into tool_use blocks", () => {
@@ -66,4 +66,18 @@ test("toAnthropicMessages tolerates misshapen tool arguments", () => {
     { role: "assistant", content: "", toolCalls: [{ id: "x", name: "t", arguments: "not json" }] },
   ]);
   assert.deepEqual(out[1].content, [{ type: "tool_use", id: "x", name: "t", input: {} }]);
+});
+
+test("createOpenAICompatible passes on the billed cost when the provider reports it", async (t) => {
+  const reply = (usage: object) =>
+    new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }], usage }), { status: 200 });
+  const replies = [
+    reply({ prompt_tokens: 100, completion_tokens: 20, cost: 0.00042 }),
+    reply({ prompt_tokens: 100, completion_tokens: 20 }),
+  ];
+  t.mock.method(globalThis, "fetch", async () => replies.shift()!);
+  const llm = createOpenAICompatible({ baseUrl: "https://example.test/v1", apiKey: "k", model: "m" });
+
+  assert.deepEqual((await llm.complete([{ role: "user", content: "hi" }])).usage, { input: 100, output: 20, cost: 0.00042 });
+  assert.deepEqual((await llm.complete([{ role: "user", content: "hi" }])).usage, { input: 100, output: 20 });
 });

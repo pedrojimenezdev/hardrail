@@ -34,13 +34,16 @@ export class Budget {
     }
   }
 
-  /** Record a model call's usage. */
-  record(usage: { input: number; output: number }): void {
+  /** Record a model call's usage. Pass `cost` when the provider reports what it
+   *  actually billed (OpenRouter does): it is used as is, instead of the estimate
+   *  from the per-token prices, which can't see cached or reasoning tokens. */
+  record(usage: { input: number; output: number; cost?: number }): void {
     this.used.input += usage.input;
     this.used.output += usage.output;
     this.used.cost +=
+      usage.cost ??
       (usage.input / 1_000_000) * this.limits.inputCostPerM +
-      (usage.output / 1_000_000) * this.limits.outputCostPerM;
+        (usage.output / 1_000_000) * this.limits.outputCostPerM;
   }
 
   get spent() {
