@@ -1,10 +1,23 @@
 {
-  "name": "railguard",
-  "version": "0.2.0",
+  "name": "hardrail",
+  "version": "0.3.0",
   "description": "The agent loop that can't run away with your bill — budget guardrails, reliable structured output, typed tool calling, tenant-safe RAG. Zero runtime deps.",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/cjs/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pedrojimenezdev/railguard-agentkit.git"
@@ -17,7 +30,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node -e \"require('node:fs').writeFileSync('dist/cjs/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\\\n')\"",
+    "prepare": "npm run build",
     "test": "node --test --experimental-strip-types 'test/**/*.test.ts'",
     "test:compiled": "tsc -p tsconfig.test.json && node --test build-test/test/*.test.js",
     "typecheck": "tsc --noEmit"

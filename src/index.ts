@@ -16,7 +16,7 @@ export { defineTool, executeTool, parseToolArguments, parseToolArgumentsResult, 
 export type { Tool, ToolArgumentsParse } from "./tools.ts";
 
 export { validateSchema } from "./schema.ts";
-export type { JSONSchema, SchemaValidation } from "./schema.ts";
+export type { JSONSchema, JSONSchemaType, SchemaValidation } from "./schema.ts";
 
 export { agent } from "./agent.ts";
 export type { AgentOptions } from "./agent.ts";
