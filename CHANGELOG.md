@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-29
+
+### Added
+
+- **CommonJS build.** The package now ships `dist/cjs` beside the ES module
+  build, chosen through `exports` (`import` / `require`). CommonJS apps can
+  `require("railguard")` on any Node 20, not only on releases that can
+  `require()` an ES module.
+- **Install from GitHub.** A `prepare` script builds the package, so
+  `github:pedrojimenezdev/railguard-agentkit#<tag>` installs a working copy. The
+  `railguard` name on npm is an unrelated package; the README now says so.
+
 ## [0.2.0] - 2026-10-25
 
 ### Added

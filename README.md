@@ -145,12 +145,20 @@ for await (const delta of llm.stream!([{ role: "user", content: "Write a haiku."
 
 ## Install
 
+The `railguard` name on the npm registry belongs to an unrelated package, so
+install from GitHub, pinned to a release tag:
+
 ```bash
-npm i railguard
+npm i github:pedrojimenezdev/railguard-agentkit#v0.2.1
+pnpm add github:pedrojimenezdev/railguard-agentkit#v0.2.1
 ```
 
-Requires Node.js 20 or newer. The published package is compiled JavaScript over
-`fetch`, so Node 20 runs it fine.
+The `prepare` script compiles the package on install. Under pnpm 10, allow it
+with `"pnpm": { "onlyBuiltDependencies": ["railguard"] }`.
+
+Requires Node.js 20 or newer. It ships both ES modules (`import`) and CommonJS
+(`require`), so CommonJS apps work on every Node 20 release, including the ones
+before `require()` of ES modules was supported.
 
 ## Contributing
 
