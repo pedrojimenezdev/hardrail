@@ -29,8 +29,9 @@ export interface LLMReply {
   text: string;
   /** Present when the model requested one or more tool calls. */
   toolCalls?: ToolCallResult[];
-  /** Number of tokens the call consumed (for budgeting). */
-  usage?: { input: number; output: number };
+  /** Number of tokens the call consumed (for budgeting), and the billed cost in
+   *  USD when the provider reports it (OpenRouter's `usage.cost`). */
+  usage?: { input: number; output: number; cost?: number };
 }
 
 export interface LLMCallOptions {
@@ -186,7 +187,7 @@ export function createOpenAICompatible(opts: {
       }
       const data = (await res.json()) as {
         choices: { message: { content?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
-        usage?: { prompt_tokens: number; completion_tokens: number };
+        usage?: { prompt_tokens: number; completion_tokens: number; cost?: number };
       };
       const choice = data.choices[0];
       return {
@@ -197,7 +198,11 @@ export function createOpenAICompatible(opts: {
           arguments: tc.function.arguments,
         })),
         usage: data.usage
-          ? { input: data.usage.prompt_tokens, output: data.usage.completion_tokens }
+          ? {
+              input: data.usage.prompt_tokens,
+              output: data.usage.completion_tokens,
+              ...(typeof data.usage.cost === "number" ? { cost: data.usage.cost } : {}),
+            }
           : undefined,
       };
     },

@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-29
+
+### Added
+
+- **Billed cost in `Budget`.** `Budget.record()` takes an optional `cost` (USD).
+  When the provider reports what it actually billed, that number is used
+  instead of the estimate from `inputCostPerM` / `outputCostPerM`, which can't
+  see cached or reasoning tokens or time-of-day pricing.
+- **`createOpenAICompatible` passes the cost on.** When the response's `usage`
+  has a `cost` (OpenRouter adds one), `LLMReply.usage.cost` carries it, so
+  `agent()` budgets on real spend with no extra code.
+
 ## [0.3.0] - 2026-10-29
 
 ### Changed
@@ -102,6 +114,7 @@ First release under the `railguard` name.
 - **README** rewritten around the problem railguard solves, with a copy-pasteable
   quickstart and honest positioning against LangChain and the raw provider SDKs.
 
+[0.4.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.2.0
 [0.1.0]: https://github.com/pedrojimenezdev/railguard/releases/tag/v0.1.0
