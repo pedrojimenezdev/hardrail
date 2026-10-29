@@ -1,35 +1,48 @@
-# railguard
+# hardrail
 
 > **The agent loop that can't run away with your bill.**
 
-[![npm](https://img.shields.io/npm/v/railguard.svg)](https://www.npmjs.com/package/railguard)
-[![CI](https://github.com/pedrojimenezdev/railguard/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrojimenezdev/railguard/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/railguard.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/hardrail.svg)](https://www.npmjs.com/package/hardrail)
+[![CI](https://github.com/pedrojimenezdev/railguard-agentkit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pedrojimenezdev/railguard-agentkit/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/hardrail.svg)](LICENSE)
 
-Production-hardened AI agent toolkit extracted from real client work.
-Zero runtime dependencies — `fetch` + Node.js built-ins only.
+A small, dependency-free toolkit for building production AI agents in
+TypeScript — budget guardrails, reliable structured output, typed tool calling
+with schema validation, and tenant-safe retrieval. Extracted from real client
+work and released for anyone building agents to use, break, and improve.
+
+**Status:** actively maintained, and will keep growing. See
+[CHANGELOG.md](CHANGELOG.md) for what's shipped, the [Modules](#modules) table
+below for what exists today, and [Contributing](#contributing) if you'd like
+to help shape what's next.
 
 ## The problem
 
-Frameworks make the demo easy; production is where agents actually break. A model
-that loops on a tool call turns into a four-figure invoice overnight, and a
-`maxSteps` cap alone won't catch it because cost is tokens, not iterations —
-`Budget` is a hard ceiling checked *before* every call, so the worst case is
-bounded by construction. Ask for JSON and you'll get prose, a markdown fence, or
-a field of the wrong type; `structured()` strips the wrapping, validates against
-your schema, and re-asks with the exact error until it parses or gives up loudly.
-A tool declares `{ n: number }` and the model sends `{ n: "21" }` — a type a `JSON.parse`
-can't catch; `executeTool` checks every call against the tool's own JSON Schema before
-`run()` ever sees it, and reports *what* was wrong so the model can correct the call.
-Multi-tenant retrieval leaks the moment isolation is a `.filter()` someone forgets,
-so `VectorStore.search(scope, …)` never sees another tenant's chunks in the first
-place. And provider lock-in is a rewrite you pay for later — one `LLM` interface
-covers Anthropic, DeepSeek, OpenAI, anything OpenAI-compatible, and your test mocks.
+Frameworks make the demo easy; production is where agents actually break.
+
+- **Runaway cost.** A model that loops on a tool call turns into a four-figure
+  invoice overnight, and a `maxSteps` cap alone won't catch it — cost is
+  tokens, not iterations. `Budget` is a hard ceiling checked *before* every
+  call, so the worst case is bounded by construction.
+- **Unreliable structured output.** Ask for JSON and you'll get prose, a
+  markdown fence, or a field of the wrong type. `structured()` strips the
+  wrapping, validates against your schema, and re-asks with the exact error
+  until it parses or gives up loudly.
+- **Tool calls the model got wrong.** A tool declares `{ n: number }` and the
+  model sends `{ n: "21" }` — a type `JSON.parse` can't catch. `executeTool`
+  checks every call against the tool's own JSON Schema before `run()` ever
+  sees it, and reports *what* was wrong so the model can correct the call.
+- **Cross-tenant data leaks.** Isolation that's a `.filter()` someone forgot
+  is isolation that eventually fails. `VectorStore.search(scope, …)` never
+  sees another tenant's chunks in the first place.
+- **Provider lock-in.** A rewrite you pay for later. One `LLM` interface
+  covers Anthropic, DeepSeek, OpenAI, anything OpenAI-compatible, and your
+  test mocks.
 
 ## Quickstart
 
 ```ts
-import { createOpenAICompatible, agent, defineTool, Budget } from "railguard";
+import { createOpenAICompatible, agent, defineTool, Budget } from "hardrail";
 
 const llm = createOpenAICompatible({
   baseUrl: "https://api.deepseek.com", // or OpenRouter, vLLM, OpenAI…
@@ -55,10 +68,10 @@ console.log(answer); // → "6 times 7 is 42."
 ```
 
 Structured output with any Zod-compatible schema (Zod itself stays out of your
-dependency tree — `railguard` only needs `safeParse`):
+dependency tree — `hardrail` only needs `safeParse`):
 
 ```ts
-import { structured } from "railguard";
+import { structured } from "hardrail";
 import { z } from "zod";
 
 const profile = await structured(llm, {
@@ -93,26 +106,32 @@ for await (const delta of llm.stream!([{ role: "user", content: "Write a haiku."
 | `createOpenAICompatible` / `createAnthropic` | fetch-based providers — no SDK dependency |
 | `stream()` / `streamToString` | SSE streaming for both providers, parsed with `fetch` + `ReadableStream` |
 
-## vs LangChain
+## How it compares
+
+### vs LangChain
 
 - **Less magic.** No chains, no runnables, no callback manager. `agent()` is a
-  `for` loop you can read in one sitting — when it misbehaves you debug your own
-  code, not a framework's abstraction stack.
-- **Hard guarantees over breadth.** LangChain integrates with far more than this
-  does. What it doesn't give you is a cost ceiling that throws *before* the call,
-  or retrieval where tenant isolation is structural rather than a filter.
-- **Nothing to install.** Zero runtime dependencies against a tree of hundreds —
-  which matters most when you're the one auditing it for a client.
+  `for` loop you can read in one sitting — when it misbehaves you debug your
+  own code, not a framework's abstraction stack.
+- **Hard guarantees over breadth.** LangChain integrates with far more than
+  this does. What it doesn't give you is a cost ceiling that throws *before*
+  the call, or retrieval where tenant isolation is structural rather than a
+  filter.
+- **Nothing to install.** Zero runtime dependencies against a tree of
+  hundreds — which matters most when you're the one auditing it for a client.
 
-## vs the raw SDK
+### vs the raw SDK
 
 - **The SDK gives you one call; production needs the loop around it.** Tool
-  dispatch, argument parsing that survives a malformed model response, retries,
-  budget accounting — you will write all of it. This is that, already tested.
+  dispatch, argument parsing that survives a malformed model response,
+  retries, budget accounting — you will write all of it. This is that,
+  already tested.
 - **Provider-portable by default.** The same `agent()` and `structured()` run
-  against Anthropic, DeepSeek, or a mock. Swapping is one line, not a migration.
-- **Still just `fetch` underneath.** No SDK to pin, no version skew, no vendored
-  transport. Drop to the raw API whenever you want — nothing here hides it.
+  against Anthropic, DeepSeek, or a mock. Swapping is one line, not a
+  migration.
+- **Still just `fetch` underneath.** No SDK to pin, no version skew, no
+  vendored transport. Drop to the raw API whenever you want — nothing here
+  hides it.
 
 ## Design principles
 
@@ -127,11 +146,28 @@ for await (const delta of llm.stream!([{ role: "user", content: "Write a haiku."
 ## Install
 
 ```bash
-npm i railguard
+npm i hardrail
 ```
 
-Requires Node.js 20 or newer. The published package is compiled JavaScript over
-`fetch`, so Node 20 runs it fine.
+Formerly `railguard`. That name on npm belongs to an unrelated package, so
+`npm i railguard` does **not** install this library.
+
+To install straight from GitHub instead, pin a release tag; the `prepare` script
+compiles the package on install (under pnpm 10, allow it with
+`"pnpm": { "onlyBuiltDependencies": ["hardrail"] }`):
+
+```bash
+npm i github:pedrojimenezdev/railguard-agentkit#v0.3.0
+```
+
+Requires Node.js 20 or newer. It ships both ES modules (`import`) and CommonJS
+(`require`), so CommonJS apps work on every Node 20 release, including the ones
+before `require()` of ES modules was supported.
+
+## Contributing
+
+This project is built in the open and maintained for the community — bug
+reports, feature ideas, and pull requests are all welcome.
 
 ### Development
 
@@ -156,10 +192,20 @@ in the matrix so the suite is genuinely verified against the oldest supported No
   `dev`, not `main`.
 - **The gate:** both branches require CI (`npm run typecheck`, the compiled test
   suite, and `npm run build`, across Node 20 and 22) to pass before a PR can
-  merge — configured as required status checks in each branch's protection
-  rule, named `Node 20` and `Node 22`. A red check blocks the merge button.
+  merge — enforced as required status checks in each branch's ruleset, named
+  `Node 20` and `Node 22`. A red check blocks the merge button.
 - Cut a release by opening a PR from `dev` into `main`; once it merges, tag and
   publish from `main`.
+
+### Guidelines
+
+- Keep the zero-runtime-dependency rule. If a change needs a package at
+  runtime, it likely belongs as a separate, opt-in integration rather than in
+  the core.
+- Add tests for new behavior — the suite is fast enough to run on every save,
+  and should stay that way.
+- Open small, focused PRs against `dev`. They're easier to review and easier
+  to revert if something's wrong.
 
 ## License
 

@@ -82,3 +82,16 @@ test("validateSchema enforces numeric and string bounds", () => {
 test("validateSchema is a no-op against an empty schema", () => {
   assert.deepEqual(validateSchema({}, { anything: "goes" }), { ok: true });
 });
+
+test("validateSchema accepts a list of types", () => {
+  const schema = { type: "array" as const, items: { type: ["integer" as const, "null" as const] } };
+  assert.deepEqual(validateSchema(schema, [3, null, 2]), { ok: true });
+  const bad = validateSchema(schema, [3, "2", 1.5]);
+  assert.equal(bad.ok, false);
+  if (!bad.ok) {
+    assert.deepEqual(bad.errors, [
+      "arguments[1]: expected integer or null, got string",
+      "arguments[2]: expected integer or null, got number",
+    ]);
+  }
+});
