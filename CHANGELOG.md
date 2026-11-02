@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`agentRun()` — a run report for the agent loop.** The loop now returns what it
+  cost, not just the answer: per-step timing (`ms`), tokens, cost in USD and each
+  tool call's outcome (`{ id, name, ok, ms }`), plus totals (`usage`, `costUsd`),
+  a `toolErrors` count, and a `stopReason`
+  (`final`, `step_limit`, `stopped_by_callback`, `aborted`, `budget_exceeded`).
+  A step's cost is the change in `budget.spent.cost`, so provider-billed costs are
+  attributed to the step that incurred them; without a `Budget`, it falls back to
+  the provider's billed `usage.cost` when reported. `agent()` keeps its signature
+  and returns `agentRun().text`.
+
+### Changed
+
+- **An exhausted `Budget` no longer throws out of `agentRun()`.** A run whose
+  budget is at its ceiling — already when a step begins, or after a step's tool
+  calls — stops with `stopReason: "budget_exceeded"`, the `Budget` error in
+  `budgetExceeded` and an empty `text`, so a request handler can log the reason
+  instead of catching an exception. `agent()` still throws on a budget stop, so
+  its contract is unchanged.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
