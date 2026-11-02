@@ -206,7 +206,8 @@ before `require()` of ES modules was supported.
 ## Contributing
 
 This project is built in the open and maintained for the community — bug
-reports, feature ideas, and pull requests are all welcome.
+reports, feature ideas, and pull requests are all welcome. Issues and pull
+requests here may be handled by the [pedrojimenezdev-ai](https://github.com/pedrojimenezdev-ai) agent account.
 
 ### Development
 
