@@ -15,26 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `toolErrors` count, and a `stopReason`
   (`final`, `step_limit`, `stopped_by_callback`, `aborted`, `budget_exceeded`).
   A step's cost is the change in `budget.spent.cost`, so provider-billed costs are
-  attributed to the step that incurred them. `agent()` keeps its signature and
-  returns `agentRun().text`.
+  attributed to the step that incurred them; without a `Budget`, it falls back to
+  the provider's billed `usage.cost` when reported. `agent()` keeps its signature
+  and returns `agentRun().text`.
 
 ### Changed
 
-- **An exhausted `Budget` no longer throws out of the loop.** A run that starts
-  or ends with the budget at its ceiling stops with
-  `stopReason: "budget_exceeded"`, the `Budget` error in `budgetExceeded`, and
-  the last reply's text as the answer — so a request handler can log the reason
-  and return a partial answer instead of a 500. The previous behaviour was an
-  exception mid-loop with no way to tell a budget stop from a provider failure.
-
-### Fixed
-
-- **No model call after the budget is spent.** The loop only checked the budget
-  at the top of each step, so a step that pushed it over its ceiling still paid
-  for one more model call. It now checks after the step's tool calls as well and
-  stops before that call. The check happens after the tools run so their results
-  stay in the message history — the final answer is the reply that already exists
-  rather than a summary request the budget can no longer afford.
+- **An exhausted `Budget` no longer throws out of `agentRun()`.** A run whose
+  budget is at its ceiling — already when a step begins, or after a step's tool
+  calls — stops with `stopReason: "budget_exceeded"`, the `Budget` error in
+  `budgetExceeded` and an empty `text`, so a request handler can log the reason
+  instead of catching an exception. `agent()` still throws on a budget stop, so
+  its contract is unchanged.
 
 ## [0.4.0] - 2026-10-29
 

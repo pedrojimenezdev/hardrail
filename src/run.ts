@@ -51,13 +51,15 @@ export type StopReason =
   | "step_limit"
   /** `onStep` returned true. */
   | "stopped_by_callback"
-  /** The signal was already aborted, so the first model call was never made. */
+  /** The signal was already aborted when a step began, so that step's model call
+   *  was never made. Checked before every step. */
   | "aborted"
-  /** The budget was already exhausted; see `budgetExceeded`. */
+  /** The budget was already exhausted when a step began; see `budgetExceeded`. */
   | "budget_exceeded";
 
 export interface AgentRun {
-  /** The final answer — exactly what `agent()` returns. */
+  /** The final answer. Empty when the loop stopped before a step produced text,
+   *  or when the budget was already exhausted. */
   text: string;
   steps: RunStep[];
   /** Tokens summed over every model call the loop made. */
@@ -69,21 +71,22 @@ export interface AgentRun {
    *  mismatch, or the tool's own `run()` throwing. The model sees each failure
    *  in the message history as `{ ok: false }` and can correct on the next turn. */
   toolErrors: number;
-  /** Set when the budget crossed its ceiling during this run; the loop stops
-   *  before the next model call. */
+  /** The `Budget` error, set whenever `stopReason` is `"budget_exceeded"` —
+   *  whether the budget was already exhausted when a step began or a step spent
+   *  past the ceiling. The loop stops before the next model call. */
   budgetExceeded?: string;
 }
 
 /**
- * Run the loop and return what it cost. Same contract as `agent()` — system →
- * model → execute tool calls → append → repeat — but the run's text comes back
+ * Run the loop and return what it cost. The same loop as `agent()` — system →
+ * model → execute tool calls → append → repeat — but the answer comes back
  * inside a report: per-step timing, usage and tool calls, plus why it stopped.
  *
- * A budget that is already exhausted when the loop starts returns
- * `stopReason: "budget_exceeded"` with the `Budget` error in `text`, rather than
- * throwing: nothing was spent by this run, and the caller now gets the reason
- * in a form it can log. A budget crossed mid-loop ends the run the same way
- * after the step's tool calls — no further model call is made.
+ * A budget that is exhausted — already when a step begins, or during a step —
+ * returns `stopReason: "budget_exceeded"` with the `Budget` error in
+ * `budgetExceeded` and no exception: the caller gets the reason in a form it can
+ * log. A budget crossed mid-step ends the run after that step's tool calls — no
+ * further model call is made.
  */
 export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
   const maxSteps = opts.maxSteps ?? 8;
@@ -93,7 +96,7 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
   let budgetExceeded: string | undefined;
 
   const finish = (reason: StopReason, answer: string): AgentRun => ({
-    text: answer,
+    text: reason === "budget_exceeded" ? "" : answer,
     steps,
     usage: steps.reduce(
       (acc, s) => ({
@@ -114,7 +117,8 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
     try {
       opts.budget?.check();
     } catch (err) {
-      return finish("budget_exceeded", (err as Error).message);
+      budgetExceeded = (err as Error).message;
+      return finish("budget_exceeded", "");
     }
 
     const started = performance.now();
@@ -127,7 +131,7 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
     const before = opts.budget?.spent.cost ?? 0;
     const usage = reply.usage;
     opts.budget?.record(usage ?? { input: 0, output: 0 });
-    const costUsd = (opts.budget?.spent.cost ?? 0) - before;
+    const costUsd = opts.budget ? opts.budget.spent.cost - before : (usage?.cost ?? 0);
     const record: RunStep = { index: step, ms, usage, costUsd, toolCalls: [], text: reply.text };
 
     messages.push({ role: "assistant", content: reply.text, toolCalls: reply.toolCalls });
@@ -145,10 +149,8 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
     for (const tc of reply.toolCalls) {
       const toolStarted = performance.now();
       const outcome = await executeTool(toolList, tc.name, tc.arguments);
-      const tool = toolList.find((t) => t.name === tc.name);
-      const ran = outcome.ok && tool !== undefined;
-      if (!ran) toolErrors++;
-      record.toolCalls.push({ name: tc.name, ok: ran, ms: Math.round(performance.now() - toolStarted), id: tc.id });
+      if (!outcome.ok) toolErrors++;
+      record.toolCalls.push({ name: tc.name, ok: outcome.ok, ms: Math.round(performance.now() - toolStarted), id: tc.id });
       messages.push({
         role: "tool",
         toolCallId: tc.id,
@@ -162,7 +164,7 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
     } catch (err) {
       budgetExceeded = (err as Error).message;
       steps.push(record);
-      return finish("budget_exceeded", reply.text);
+      return finish("budget_exceeded", "");
     }
     // Nothing follows the last allowed step, so its text is the best answer we have.
     if (step === maxSteps - 1) {
@@ -176,7 +178,15 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
   return finish("step_limit", "");
 }
 
-/** The loop alone, for callers that only want the answer. */
+/**
+ * The loop alone, for callers that only want the answer. Its contract is
+ * unchanged: a budget stop or an aborted signal throws — the `Budget` error
+ * itself, or an `AbortError` — rather than being returned as text. Use
+ * `agentRun()` when you want the stop reason instead of an exception.
+ */
 export async function agent(opts: AgentOptions): Promise<string> {
-  return (await agentRun(opts)).text;
+  const run = await agentRun(opts);
+  if (run.stopReason === "budget_exceeded") throw new Error(run.budgetExceeded);
+  if (run.stopReason === "aborted") throw new DOMException("The operation was aborted.", "AbortError");
+  return run.text;
 }

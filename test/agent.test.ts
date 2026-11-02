@@ -73,10 +73,64 @@ test("budget stops a runaway agent", async () => {
   const run = await agentRun({ llm, tools: [], system: "s", maxSteps: 4, budget });
   assert.equal(run.stopReason, "budget_exceeded");
   assert.match(String(run.budgetExceeded), /Budget exceeded: 200 tokens >= 150/);
+  assert.equal(run.text, "", "the error goes to budgetExceeded, not to the answer");
   assert.equal(calls, 1, "the next model call is never made once the budget is crossed");
-  // `agent()` keeps the old contract: the answer text, not a report.
-  const again = await agent({ llm, tools: [], system: "s", maxSteps: 4, budget });
-  assert.equal(typeof again, "string");
+  // `agent()` keeps its contract: a budget stop throws, as it always has. A fresh
+  // budget spends the first step past the ceiling and throws instead of making
+  // the second call.
+  calls = 0;
+  await assert.rejects(
+    () => agent({ llm, tools: [], system: "s", maxSteps: 4, budget: new Budget({ maxTokens: 150 }) }),
+    /Budget exceeded: 200 tokens >= 150/,
+  );
+  assert.equal(calls, 1, "agent() stops before the next model call too");
+});
+
+test("agent throws when the budget is already exhausted before the first call", async () => {
+  const budget = new Budget({ maxCostUsd: 0.01 });
+  budget.record({ input: 0, output: 0, cost: 0.02 });
+  await assert.rejects(
+    () =>
+      agent({
+        llm: { async complete() { throw new Error("must not be called"); } },
+        system: "s",
+        budget,
+      }),
+    /Budget exceeded: \$0\.0200 >= \$0\.01/,
+  );
+});
+
+test("agent throws on an abort between steps, like an abort during a model call", async () => {
+  const ac = new AbortController();
+  ac.abort();
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      agent({
+        llm: { async complete() { calls++; return { text: "x" }; } },
+        system: "s",
+        signal: ac.signal,
+      }),
+    (err: unknown) => err instanceof Error && err.name === "AbortError",
+  );
+  assert.equal(calls, 0);
+
+  // Aborted during a step: the next step's pre-check throws too.
+  const between = new AbortController();
+  const llm = scriptedLLM([{ text: "", toolCalls: [{ id: "1", name: "noop", arguments: "{}" }] as ToolCallResult[] }]);
+  await assert.rejects(
+    () =>
+      agent({
+        llm,
+        tools: [noopTool],
+        system: "s",
+        signal: between.signal,
+        onStep: () => {
+          between.abort();
+        },
+      }),
+    (err: unknown) => err instanceof Error && err.name === "AbortError",
+  );
 });
 
 test("onStep fires exactly once per step", async () => {
@@ -218,6 +272,18 @@ test("agentRun uses the provider's billed cost when reported", async () => {
   assert.equal(run.usage.cost, 0.0009);
 });
 
+test("agentRun reports the provider's billed cost without a Budget", async () => {
+  const llm = scriptedLLM([{ text: "hi", usage: { input: 1000, output: 1000, cost: 0.0009 } }]);
+  const run = await agentRun({ llm, system: "s" });
+  assert.equal(run.costUsd, 0.0009, "falls back to usage.cost when there is no Budget");
+  assert.equal(run.usage.cost, 0.0009);
+  assert.equal(run.steps[0].costUsd, 0.0009);
+
+  // No Budget and no reported cost: nothing to measure from, so 0.
+  const unpriced = await agentRun({ llm: scriptedLLM([{ text: "hi", usage: { input: 1000, output: 1000 } }]), system: "s" });
+  assert.equal(unpriced.costUsd, 0);
+});
+
 test("agentRun counts failed tool calls and still finishes", async () => {
   const llm = scriptedLLM([
     {
@@ -275,7 +341,9 @@ test("agentRun reports a budget already exhausted before the loop starts", async
   });
   assert.equal(run.stopReason, "budget_exceeded");
   assert.equal(run.steps.length, 0);
-  assert.match(run.text, /Budget exceeded/);
+  assert.equal(run.text, "");
+  // The reason lives in budgetExceeded whether the run starts or ends over budget.
+  assert.match(String(run.budgetExceeded), /Budget exceeded: \$0\.0200 >= \$0\.01/);
 });
 
 test("agentRun with maxSteps 0 never calls the model", async () => {

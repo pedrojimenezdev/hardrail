@@ -115,22 +115,20 @@ run.steps;      // per model call, in order:
 
 Each step's `costUsd` is the difference in `budget.spent.cost` before and after
 the call, so provider-billed costs (v0.4.0) are attributed to the step that
-incurred them. `ms` is wall-clock time rounded to milliseconds; with no
-`Budget` passed, `costUsd` is `0` because there are no prices to estimate from.
+incurred them. `ms` is wall-clock time rounded to milliseconds. With no
+`Budget` passed, a step's cost is the provider's billed `usage.cost` when the
+provider reports one (OpenRouter does); otherwise there are no prices to
+estimate from and `costUsd` is `0`.
 
-When the budget is exhausted — before the first call or after a step — the run
-does not throw. It stops with `stopReason: "budget_exceeded"` and the
-`Budget` error in `budgetExceeded`, so a request handler can log the reason
-and return a partial answer instead of a 500. An aborted signal likewise stops
-the run with `"aborted"` before the next model call. Callers that want an
-exception back can `throw` on `run.stopReason`.
+When the budget is exhausted — already when a step begins, or during a step —
+the run does not throw. It stops with `stopReason: "budget_exceeded"`, the
+`Budget` error in `budgetExceeded` and an empty `text`, so a request handler can
+log the reason and decide what to return. An aborted signal likewise stops the
+run with `"aborted"` before the next model call. Callers that want an exception
+back can `throw` on `run.stopReason`.
 
-`agent()` keeps returning just the string, with two contract changes: a budget
-it was already over no longer throws (the `Budget` message becomes the answer),
-and it no longer makes a model call after a step spends past the ceiling. The
-budget is checked after the step's tool calls, so their results stay in the
-history — the final answer is the reply that already exists, not a summary
-request the budget can no longer afford.
+`agent()` still throws on a budget stop and on an aborted signal, as it always
+has; only `agentRun()` turns them into a stop reason.
 
 ## Modules
 
