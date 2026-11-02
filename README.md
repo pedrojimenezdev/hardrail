@@ -92,11 +92,52 @@ for await (const delta of llm.stream!([{ role: "user", content: "Write a haiku."
 }
 ```
 
+## Run reports
+
+`agent()` returns the answer and nothing else. In production the answer is only
+half of what you log — you also need to know what it cost and where the time
+went. `agentRun()` runs the same loop and returns both:
+
+```ts
+import { agentRun, Budget } from "hardrail";
+
+const budget = new Budget({ maxTokens: 4000, maxCostUsd: 0.2 });
+const run = await agentRun({ llm, tools: [multiply], system, maxSteps: 6, budget });
+
+run.text;       // → "6 times 7 is 42." — the same string agent() would return
+run.stopReason; // "final" | "step_limit" | "stopped_by_callback" | "aborted" | "budget_exceeded"
+run.costUsd;    // billed or estimated cost across the run, matching budget.spent.cost
+run.usage;      // { input, output, cost } summed over every model call
+run.toolErrors; // calls the model got wrong (the loop kept going and let it correct)
+run.steps;      // per model call, in order:
+//   { index, ms, usage, costUsd, text, toolCalls: [{ id, name, ok, ms }] }
+```
+
+Each step's `costUsd` is the difference in `budget.spent.cost` before and after
+the call, so provider-billed costs (v0.4.0) are attributed to the step that
+incurred them. `ms` is wall-clock time rounded to milliseconds; with no
+`Budget` passed, `costUsd` is `0` because there are no prices to estimate from.
+
+When the budget is exhausted — before the first call or after a step — the run
+does not throw. It stops with `stopReason: "budget_exceeded"` and the
+`Budget` error in `budgetExceeded`, so a request handler can log the reason
+and return a partial answer instead of a 500. An aborted signal likewise stops
+the run with `"aborted"` before the next model call. Callers that want an
+exception back can `throw` on `run.stopReason`.
+
+`agent()` keeps returning just the string, with two contract changes: a budget
+it was already over no longer throws (the `Budget` message becomes the answer),
+and it no longer makes a model call after a step spends past the ceiling. The
+budget is checked after the step's tool calls, so their results stay in the
+history — the final answer is the reply that already exists, not a summary
+request the budget can no longer afford.
+
 ## Modules
 
 | Module | What it does |
 |---|---|
 | `agent()` | The loop: system → model → execute tool calls → append → repeat, capped by `maxSteps` + `Budget` |
+| `agentRun()` | The same loop, returning the answer plus a report: per-step timing, tokens, cost and tool calls, total usage/cost, and why it stopped |
 | `structured()` | JSON out of an LLM, validated, self-corrected on miss (strip fences, re-ask with the error) |
 | `defineTool` / `executeTool` | Typed tool registry; the library never trusts model-supplied shapes — JSON validity *and* the declared JSON Schema are both enforced before `run()` sees a call |
 | `validateSchema` | The zero-dependency JSON Schema validator behind tool argument checking — usable standalone |
