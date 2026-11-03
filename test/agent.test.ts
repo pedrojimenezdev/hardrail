@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { agent, agentRun } from "../src/agent.ts";
 import { Budget } from "../src/budget.ts";
-import type { LLM, LLMReply, ToolCallResult } from "../src/llm.ts";
+import type { ChatMessage, LLM, LLMReply, ToolCallResult } from "../src/llm.ts";
 import { defineTool, parseToolArguments, executeTool } from "../src/tools.ts";
 
 // A scripted LLM that returns tool calls on step 0 and a final answer on step 1.
@@ -356,4 +356,75 @@ test("agentRun with maxSteps 0 never calls the model", async () => {
   assert.equal(run.text, "");
   assert.deepEqual(run.steps, []);
   assert.deepEqual(run.usage, { input: 0, output: 0, cost: 0 });
+});
+
+// --- conversations across runs ---------------------------------------------
+
+// A scripted LLM that also saves a snapshot of the messages each call received.
+function recordingLLM(steps: LLMReply[]): { llm: LLM; seen: ChatMessage[][] } {
+  const seen: ChatMessage[][] = [];
+  let i = 0;
+  const llm: LLM = {
+    async complete(messages) {
+      seen.push(structuredClone(messages));
+      const r = steps[Math.min(i, steps.length - 1)];
+      i++;
+      return r;
+    },
+  };
+  return { llm, seen };
+}
+
+test("agentRun sends the passed messages after the system message without mutating them", async () => {
+  const passed: ChatMessage[] = [
+    { role: "user", content: "hi" },
+    { role: "assistant", content: "hello" },
+    { role: "user", content: "how are you?" },
+  ];
+  const original = structuredClone(passed);
+  const { llm, seen } = recordingLLM([{ text: "fine" }]);
+  await agentRun({ llm, system: "s", messages: passed });
+  assert.deepEqual(seen[0], [{ role: "system", content: "s" }, ...original]);
+  assert.deepEqual(passed, original, "the caller's array is unchanged");
+});
+
+test("agentRun sends only the system message when no messages are passed", async () => {
+  const { llm, seen } = recordingLLM([{ text: "fine" }]);
+  await agentRun({ llm, system: "s" });
+  assert.deepEqual(seen[0], [{ role: "system", content: "s" }]);
+});
+
+test("agentRun reports the history without the system message", async () => {
+  const { llm } = recordingLLM([
+    { text: "", toolCalls: [{ id: "1", name: "noop", arguments: "{}" }] as ToolCallResult[], usage: { input: 1, output: 1 } },
+    { text: "done", usage: { input: 1, output: 1 } },
+  ]);
+  const run = await agentRun({ llm, tools: [noopTool], system: "s", messages: [{ role: "user", content: "go" }] });
+  assert.deepEqual(
+    run.messages.map((m) => m.role),
+    ["user", "assistant", "tool", "assistant"],
+  );
+  assert.equal(run.messages.at(-1)?.content, "done");
+});
+
+test("a second agentRun continues the conversation from run.messages", async () => {
+  const first = recordingLLM([{ text: "first answer" }]);
+  const run = await agentRun({ llm: first.llm, system: "s", messages: [{ role: "user", content: "first question" }] });
+
+  const second = recordingLLM([{ text: "second answer" }]);
+  const continued = await agentRun({
+    llm: second.llm,
+    system: "s",
+    messages: [...run.messages, { role: "user", content: "next" }],
+  });
+  const sent = second.seen[0];
+  assert.equal(sent[0].role, "system");
+  assert.equal(sent.length, 4, "system message, the full earlier history, then the new message");
+  assert.deepEqual(sent.slice(1), [
+    ...run.messages,
+    { role: "user", content: "next" },
+  ]);
+  assert.equal(sent[1].content, "first question");
+  assert.equal(sent[2].content, "first answer");
+  assert.equal(continued.text, "second answer");
 });

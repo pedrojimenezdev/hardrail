@@ -130,6 +130,21 @@ back can `throw` on `run.stopReason`.
 `agent()` still throws on a budget stop and on an aborted signal, as it always
 has; only `agentRun()` turns them into a stop reason.
 
+## Conversations
+
+Pass the conversation so far as `messages` and the loop sends it after the
+system prompt; the run report hands it back without the system prompt, so a
+follow-up continues where the last run stopped:
+
+```ts
+const run = await agentRun({ llm, system, messages: [{ role: "user", content: "What is the tallest peak in Spain?" }] });
+
+const next = await agentRun({ llm, system, messages: [...run.messages, { role: "user", content: "And in Portugal?" }] });
+```
+
+After a run that stopped with `"stopped_by_callback"`, the last assistant message
+may have tool calls with no results, so do not continue from that history.
+
 ## Modules
 
 | Module | What it does |
