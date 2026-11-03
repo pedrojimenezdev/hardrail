@@ -229,7 +229,7 @@ compiles the package on install (under pnpm 10, allow it with
 `"pnpm": { "onlyBuiltDependencies": ["hardrail"] }`):
 
 ```bash
-npm i github:pedrojimenezdev/railguard-agentkit#v0.4.0
+npm i github:pedrojimenezdev/railguard-agentkit#v0.5.0
 ```
 
 Requires Node.js 20 or newer. It ships both ES modules (`import`) and CommonJS
