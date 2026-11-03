@@ -110,7 +110,7 @@ run.costUsd;    // billed or estimated cost across the run, matching budget.spen
 run.usage;      // { input, output, cost } summed over every model call
 run.toolErrors; // calls the model got wrong (the loop kept going and let it correct)
 run.steps;      // per model call, in order:
-//   { index, ms, usage, costUsd, text, toolCalls: [{ id, name, ok, ms }] }
+//   { index, ms, usage, costUsd, text, toolCalls: [{ id, name, ok, ms, skipped? }] }
 ```
 
 Each step's `costUsd` is the difference in `budget.spent.cost` before and after
@@ -145,6 +145,8 @@ The option is off by default. The call that crosses the limit is never run, and
 the run stops with `stopReason: "loop_detected"` and the offending call in
 `repeatedToolCall` (`{ name, arguments, count }`). `agent()` throws a
 `Loop detected` error instead of returning text.
+
+The calls of the stopping step appear in `run.steps` with `skipped: true` and are not counted in `toolErrors`; identical calls within one reply count too; counts start at zero for each run, so calls in `messages` passed in from an earlier run are not counted; and a loop stop takes priority over the budget and the step limit for that step.
 
 ## Conversations
 

@@ -447,12 +447,16 @@ function countingTool() {
 }
 
 // A model that always asks for the same call, with a fresh id each time.
-function repeatingLLM(name: string, args: string): { llm: LLM; calls: () => number } {
+function repeatingLLM(
+  name: string,
+  args: string,
+  usage: { input: number; output: number } = { input: 1, output: 1 },
+): { llm: LLM; calls: () => number } {
   let calls = 0;
   const llm: LLM = {
     async complete() {
       calls++;
-      return { text: "", toolCalls: [{ id: String(calls), name, arguments: args }] as ToolCallResult[], usage: { input: 1, output: 1 } };
+      return { text: "", toolCalls: [{ id: String(calls), name, arguments: args }] as ToolCallResult[], usage };
     },
   };
   return { llm, calls: () => calls };
@@ -553,4 +557,61 @@ test("agent() throws when the loop guard stops the run", async () => {
 test("maxIdenticalToolCalls must be an integer >= 1", async () => {
   const llm: LLM = { async complete() { throw new Error("must not be called"); } };
   await assert.rejects(() => agentRun({ llm, system: "s", maxIdenticalToolCalls: 0 }), RangeError);
+});
+
+test("a loop stop reports the calls it skipped in the last step", async () => {
+  const { tool } = countingTool();
+  const llm = scriptedLLM([
+    { text: "", toolCalls: [{ id: "1", name: "search", arguments: '{"q":"dogs"}' }] as ToolCallResult[] },
+    {
+      text: "",
+      toolCalls: [
+        { id: "2", name: "search", arguments: '{"q":"dogs"}' },
+        { id: "3", name: "search", arguments: '{"q":"cats"}' },
+      ] as ToolCallResult[],
+    },
+  ]);
+  const run = await agentRun({ llm, tools: [tool], system: "s", maxIdenticalToolCalls: 1 });
+
+  assert.equal(run.stopReason, "loop_detected");
+  assert.deepEqual(run.steps.at(-1)!.toolCalls, [
+    { name: "search", ok: false, ms: 0, id: "2", skipped: true },
+    { name: "search", ok: false, ms: 0, id: "3", skipped: true },
+  ]);
+  assert.equal(run.toolErrors, 0, "skipped calls are not tool errors");
+});
+
+test("a call that ran has no skipped property", async () => {
+  const { tool } = countingTool();
+  const llm = scriptedLLM([
+    { text: "", toolCalls: [{ id: "1", name: "search", arguments: '{"q":"dogs"}' }] as ToolCallResult[] },
+    {
+      text: "",
+      toolCalls: [
+        { id: "2", name: "search", arguments: '{"q":"dogs"}' },
+        { id: "3", name: "search", arguments: '{"q":"cats"}' },
+      ] as ToolCallResult[],
+    },
+  ]);
+  const run = await agentRun({ llm, tools: [tool], system: "s", maxIdenticalToolCalls: 1 });
+
+  const entry = run.steps[0].toolCalls[0];
+  assert.equal(entry.id, "1");
+  assert.equal(entry.ok, true);
+  assert.equal("skipped" in entry, false);
+});
+
+test("a loop stop takes priority over the budget for that step", async () => {
+  const { tool } = countingTool();
+  const { llm } = repeatingLLM("search", '{"q":"dogs"}', { input: 100, output: 100 });
+  const run = await agentRun({
+    llm,
+    tools: [tool],
+    system: "s",
+    maxIdenticalToolCalls: 1,
+    budget: new Budget({ maxTokens: 350 }),
+  });
+
+  assert.equal(run.stopReason, "loop_detected");
+  assert.equal(run.budgetExceeded, undefined);
 });
