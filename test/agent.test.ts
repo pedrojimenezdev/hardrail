@@ -428,3 +428,129 @@ test("a second agentRun continues the conversation from run.messages", async () 
   assert.equal(sent[2].content, "first answer");
   assert.equal(continued.text, "second answer");
 });
+
+// --- the loop guard: maxIdenticalToolCalls ---------------------------------
+
+// A tool that counts how many times it actually ran.
+function countingTool() {
+  const state = { runs: 0 };
+  const tool = defineTool<{ q: string }>({
+    name: "search",
+    description: "search",
+    parameters: { type: "object", properties: { q: { type: "string" } } },
+    run: ({ q }) => {
+      state.runs++;
+      return `result for ${q}`;
+    },
+  });
+  return { tool, state };
+}
+
+// A model that always asks for the same call, with a fresh id each time.
+function repeatingLLM(name: string, args: string): { llm: LLM; calls: () => number } {
+  let calls = 0;
+  const llm: LLM = {
+    async complete() {
+      calls++;
+      return { text: "", toolCalls: [{ id: String(calls), name, arguments: args }] as ToolCallResult[], usage: { input: 1, output: 1 } };
+    },
+  };
+  return { llm, calls: () => calls };
+}
+
+test("maxIdenticalToolCalls stops the loop and reports the repeated call", async () => {
+  const { tool, state } = countingTool();
+  const { llm, calls } = repeatingLLM("search", '{"q":"dogs"}');
+  const run = await agentRun({ llm, tools: [tool], system: "s", maxIdenticalToolCalls: 2 });
+
+  assert.equal(run.stopReason, "loop_detected");
+  assert.equal(state.runs, 2, "the call that crossed the limit never runs");
+  assert.equal(calls(), 3, "the model is called once per step, including the one that crossed the limit");
+  assert.equal(run.steps.length, 3);
+  assert.equal(run.text, "");
+  assert.deepEqual(run.repeatedToolCall, { name: "search", arguments: '{"q":"dogs"}', count: 3 });
+});
+
+test("maxIdenticalToolCalls ignores key order and whitespace", async () => {
+  const { tool, state } = countingTool();
+  const replies: LLMReply[] = [
+    { text: "", toolCalls: [{ id: "1", name: "search", arguments: '{"a":1,"b":2}' }] as ToolCallResult[] },
+    { text: "", toolCalls: [{ id: "2", name: "search", arguments: '{ "b": 2, "a": 1 }' }] as ToolCallResult[] },
+  ];
+  const run = await agentRun({ llm: scriptedLLM(replies), tools: [tool], system: "s", maxIdenticalToolCalls: 1 });
+
+  assert.equal(run.stopReason, "loop_detected");
+  assert.equal(state.runs, 1);
+  assert.equal(run.repeatedToolCall?.count, 2);
+});
+
+test("maxIdenticalToolCalls lets a model that varies its calls finish", async () => {
+  const { tool, state } = countingTool();
+  const llm = scriptedLLM([
+    { text: "", toolCalls: [{ id: "1", name: "search", arguments: '{"q":"dogs"}' }] as ToolCallResult[] },
+    { text: "", toolCalls: [{ id: "2", name: "search", arguments: '{"q":"cats"}' }] as ToolCallResult[] },
+    { text: "done" },
+  ]);
+  const run = await agentRun({ llm, tools: [tool], system: "s", maxIdenticalToolCalls: 1 });
+
+  assert.equal(run.stopReason, "final");
+  assert.equal(run.text, "done");
+  assert.equal(state.runs, 2);
+  assert.equal(run.repeatedToolCall, undefined);
+});
+
+test("a loop stop answers every call of the last step without running it", async () => {
+  const { tool, state } = countingTool();
+  const llm = scriptedLLM([
+    { text: "", toolCalls: [{ id: "1", name: "search", arguments: '{"q":"dogs"}' }] as ToolCallResult[] },
+    {
+      text: "",
+      toolCalls: [
+        { id: "2", name: "search", arguments: '{"q":"dogs"}' },
+        { id: "3", name: "search", arguments: '{"q":"cats"}' },
+      ] as ToolCallResult[],
+    },
+  ]);
+  const run = await agentRun({ llm, tools: [tool], system: "s", maxIdenticalToolCalls: 1 });
+
+  assert.equal(run.stopReason, "loop_detected");
+  assert.equal(state.runs, 1, "no call of the step that crossed the limit runs");
+  const last = run.messages.at(-1)!;
+  assert.equal(last.role, "tool");
+  const content = JSON.parse(last.content);
+  assert.equal(content.ok, false);
+  assert.equal(content.result, "Not run: the loop stopped after repeated identical tool calls.");
+  // Every call of that step has a result, so the history is valid to continue from.
+  const answered = run.messages.filter((m) => m.role === "tool").map((m) => m.toolCallId);
+  assert.deepEqual(answered, ["1", "2", "3"]);
+});
+
+test("without maxIdenticalToolCalls identical calls are not stopped", async () => {
+  const { tool, state } = countingTool();
+  const llm = scriptedLLM([
+    ...Array.from({ length: 5 }, (_, i) => ({
+      text: "",
+      toolCalls: [{ id: String(i + 1), name: "search", arguments: '{"q":"dogs"}' }] as ToolCallResult[],
+    })),
+    { text: "done" },
+  ]);
+  const run = await agentRun({ llm, tools: [tool], system: "s" });
+
+  assert.equal(run.stopReason, "final");
+  assert.equal(run.text, "done");
+  assert.equal(state.runs, 5, "the guard is off by default");
+});
+
+test("agent() throws when the loop guard stops the run", async () => {
+  const { tool } = countingTool();
+  const { llm } = repeatingLLM("search", '{"q":"dogs"}');
+  await assert.rejects(
+    () => agent({ llm, tools: [tool], system: "s", maxIdenticalToolCalls: 2 }),
+    (err: unknown) => err instanceof Error && /^Loop detected: tool \w+ was requested 3 times/.test(err.message),
+  );
+});
+
+test("maxIdenticalToolCalls must be an integer >= 1", async () => {
+  const llm: LLM = { async complete() { throw new Error("must not be called"); } };
+  await assert.rejects(() => agentRun({ llm, system: "s", maxIdenticalToolCalls: 0 }), RangeError);
+});

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`maxIdenticalToolCalls` — an opt-in loop guard.** When the model requests the
+  same tool call (same name, same arguments, ignoring key order and whitespace)
+  more than the allowed number of times in one run, the loop stops before
+  running it: `agentRun()` returns `stopReason: "loop_detected"` with the call in
+  `repeatedToolCall` (`{ name, arguments, count }`), and `agent()` throws. Off
+  when the option is omitted.
+
 - **`agentRun()` — a run report for the agent loop.** The loop now returns what it
   cost, not just the answer: per-step timing (`ms`), tokens, cost in USD and each
   tool call's outcome (`{ id, name, ok, ms }`), plus totals (`usage`, `costUsd`),
