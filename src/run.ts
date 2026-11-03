@@ -32,6 +32,9 @@ export interface ToolCallReport {
   ms: number;
   /** The model's id for the call, so it can be matched to the message history. */
   id: string;
+  /** Set when the loop guard stopped the run before this call ran. Such a call
+   *  has `ok: false` and `ms: 0` and is not counted in `toolErrors`. */
+  skipped?: true;
 }
 
 export interface RunStep {
@@ -62,7 +65,10 @@ export type StopReason =
   | "aborted"
   /** The budget was already exhausted when a step began; see `budgetExceeded`. */
   | "budget_exceeded"
-  /** A tool call was requested more than `maxIdenticalToolCalls` times; see `repeatedToolCall`. */
+  /** A tool call was requested more than `maxIdenticalToolCalls` times; see
+   *  `repeatedToolCall`. Checked after the model replies and before any of that
+   *  step's calls run, so it takes priority over the budget and the step limit
+   *  for that step: `budgetExceeded` stays unset and `text` is empty. */
   | "loop_detected";
 
 export interface AgentRun {
@@ -77,7 +83,8 @@ export interface AgentRun {
   stopReason: StopReason;
   /** Number of tool calls that failed — unknown tool, bad arguments, schema
    *  mismatch, or the tool's own `run()` throwing. The model sees each failure
-   *  in the message history as `{ ok: false }` and can correct on the next turn. */
+   *  in the message history as `{ ok: false }` and can correct on the next turn.
+   *  Calls the loop guard skipped are not counted. */
   toolErrors: number;
   /** The `Budget` error, set whenever `stopReason` is `"budget_exceeded"` —
    *  whether the budget was already exhausted when a step began or a step spent
@@ -180,6 +187,7 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
         // Answer every call of this step without running it, so the history stays valid to continue from.
         for (const tc of reply.toolCalls) {
           messages.push({ role: "tool", toolCallId: tc.id, content: JSON.stringify({ ok: false, result: SKIPPED }) });
+          record.toolCalls.push({ name: tc.name, ok: false, ms: 0, id: tc.id, skipped: true });
         }
         steps.push(record);
         return finish("loop_detected", "");

@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   more than the allowed number of times in one run, the loop stops before
   running it: `agentRun()` returns `stopReason: "loop_detected"` with the call in
   `repeatedToolCall` (`{ name, arguments, count }`), and `agent()` throws. Off
-  when the option is omitted.
+  when the option is omitted. The calls the guard skipped appear in the step's
+  `toolCalls` with `skipped: true`.
 
 - **`agentRun()` — a run report for the agent loop.** The loop now returns what it
   cost, not just the answer: per-step timing (`ms`), tokens, cost in USD and each
