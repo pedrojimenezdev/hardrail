@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-03
+
+### Added
+
+- **`maxIdenticalToolCalls` — an opt-in loop guard.** When the model requests the
+  same tool call (same name, same arguments, ignoring key order and whitespace)
+  more than the allowed number of times in one run, the loop stops before
+  running it: `agentRun()` returns `stopReason: "loop_detected"` with the call in
+  `repeatedToolCall` (`{ name, arguments, count }`), and `agent()` throws. Off
+  when the option is omitted. The calls the guard skipped appear in the step's
+  `toolCalls` with `skipped: true`.
+
+- **`agentRun()` — a run report for the agent loop.** The loop now returns what it
+  cost, not just the answer: per-step timing (`ms`), tokens, cost in USD and each
+  tool call's outcome (`{ id, name, ok, ms }`), plus totals (`usage`, `costUsd`),
+  a `toolErrors` count, and a `stopReason`
+  (`final`, `step_limit`, `stopped_by_callback`, `aborted`, `budget_exceeded`).
+  A step's cost is the change in `budget.spent.cost`, so provider-billed costs are
+  attributed to the step that incurred them; without a `Budget`, it falls back to
+  the provider's billed `usage.cost` when reported. `agent()` keeps its signature
+  and returns `agentRun().text`.
+
+- **Conversations across runs — `messages` on the options and on the run report.**
+  `AgentOptions.messages` (sent after the system prompt, never mutated) lets a
+  caller pass the conversation so far; `AgentRun.messages` returns the history
+  without the system prompt, so appending a user message and passing it back
+  continues the conversation in the next run.
+
+### Changed
+
+- **An exhausted `Budget` no longer throws out of `agentRun()`.** A run whose
+  budget is at its ceiling — already when a step begins, or after a step's tool
+  calls — stops with `stopReason: "budget_exceeded"`, the `Budget` error in
+  `budgetExceeded` and an empty `text`, so a request handler can log the reason
+  instead of catching an exception. `agent()` still throws on a budget stop, so
+  its contract is unchanged.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
@@ -114,6 +151,7 @@ First release under the `railguard` name.
 - **README** rewritten around the problem railguard solves, with a copy-pasteable
   quickstart and honest positioning against LangChain and the raw provider SDKs.
 
+[0.5.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.5.0
 [0.4.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.2.0

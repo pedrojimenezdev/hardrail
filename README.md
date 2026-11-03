@@ -92,11 +92,83 @@ for await (const delta of llm.stream!([{ role: "user", content: "Write a haiku."
 }
 ```
 
+## Run reports
+
+`agent()` returns the answer and nothing else. In production the answer is only
+half of what you log — you also need to know what it cost and where the time
+went. `agentRun()` runs the same loop and returns both:
+
+```ts
+import { agentRun, Budget } from "hardrail";
+
+const budget = new Budget({ maxTokens: 4000, maxCostUsd: 0.2 });
+const run = await agentRun({ llm, tools: [multiply], system, maxSteps: 6, budget });
+
+run.text;       // → "6 times 7 is 42." — the same string agent() would return
+run.stopReason; // "final" | "step_limit" | "stopped_by_callback" | "aborted" | "budget_exceeded" | "loop_detected"
+run.costUsd;    // billed or estimated cost across the run, matching budget.spent.cost
+run.usage;      // { input, output, cost } summed over every model call
+run.toolErrors; // calls the model got wrong (the loop kept going and let it correct)
+run.steps;      // per model call, in order:
+//   { index, ms, usage, costUsd, text, toolCalls: [{ id, name, ok, ms, skipped? }] }
+```
+
+Each step's `costUsd` is the difference in `budget.spent.cost` before and after
+the call, so provider-billed costs (v0.4.0) are attributed to the step that
+incurred them. `ms` is wall-clock time rounded to milliseconds. With no
+`Budget` passed, a step's cost is the provider's billed `usage.cost` when the
+provider reports one (OpenRouter does); otherwise there are no prices to
+estimate from and `costUsd` is `0`.
+
+When the budget is exhausted — already when a step begins, or during a step —
+the run does not throw. It stops with `stopReason: "budget_exceeded"`, the
+`Budget` error in `budgetExceeded` and an empty `text`, so a request handler can
+log the reason and decide what to return. An aborted signal likewise stops the
+run with `"aborted"` before the next model call. Callers that want an exception
+back can `throw` on `run.stopReason`.
+
+`agent()` still throws on a budget stop and on an aborted signal, as it always
+has; only `agentRun()` turns them into a stop reason.
+
+## Loop guard
+
+A model that keeps asking for the same tool call is only stopped by `maxSteps`
+or the budget — after the money is spent. `maxIdenticalToolCalls` stops the run
+as soon as one call (same name, same arguments) is requested more times than
+allowed:
+
+```ts
+const run = await agentRun({ llm, tools: [multiply], system, maxIdenticalToolCalls: 2 });
+```
+
+The option is off by default. The call that crosses the limit is never run, and
+the run stops with `stopReason: "loop_detected"` and the offending call in
+`repeatedToolCall` (`{ name, arguments, count }`). `agent()` throws a
+`Loop detected` error instead of returning text.
+
+The calls of the stopping step appear in `run.steps` with `skipped: true` and are not counted in `toolErrors`; identical calls within one reply count too; counts start at zero for each run, so calls in `messages` passed in from an earlier run are not counted; and a loop stop takes priority over the budget and the step limit for that step.
+
+## Conversations
+
+Pass the conversation so far as `messages` and the loop sends it after the
+system prompt; the run report hands it back without the system prompt, so a
+follow-up continues where the last run stopped:
+
+```ts
+const run = await agentRun({ llm, system, messages: [{ role: "user", content: "What is the tallest peak in Spain?" }] });
+
+const next = await agentRun({ llm, system, messages: [...run.messages, { role: "user", content: "And in Portugal?" }] });
+```
+
+After a run that stopped with `"stopped_by_callback"`, the last assistant message
+may have tool calls with no results, so do not continue from that history.
+
 ## Modules
 
 | Module | What it does |
 |---|---|
 | `agent()` | The loop: system → model → execute tool calls → append → repeat, capped by `maxSteps` + `Budget` |
+| `agentRun()` | The same loop, returning the answer plus a report: per-step timing, tokens, cost and tool calls, total usage/cost, and why it stopped |
 | `structured()` | JSON out of an LLM, validated, self-corrected on miss (strip fences, re-ask with the error) |
 | `defineTool` / `executeTool` | Typed tool registry; the library never trusts model-supplied shapes — JSON validity *and* the declared JSON Schema are both enforced before `run()` sees a call |
 | `validateSchema` | The zero-dependency JSON Schema validator behind tool argument checking — usable standalone |
@@ -157,7 +229,7 @@ compiles the package on install (under pnpm 10, allow it with
 `"pnpm": { "onlyBuiltDependencies": ["hardrail"] }`):
 
 ```bash
-npm i github:pedrojimenezdev/railguard-agentkit#v0.4.0
+npm i github:pedrojimenezdev/railguard-agentkit#v0.5.0
 ```
 
 Requires Node.js 20 or newer. It ships both ES modules (`import`) and CommonJS
