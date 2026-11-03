@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the provider's billed `usage.cost` when reported. `agent()` keeps its signature
   and returns `agentRun().text`.
 
+- **Conversations across runs — `messages` on the options and on the run report.**
+  `AgentOptions.messages` (sent after the system prompt, never mutated) lets a
+  caller pass the conversation so far; `AgentRun.messages` returns the history
+  without the system prompt, so appending a user message and passing it back
+  continues the conversation in the next run.
+
 ### Changed
 
 - **An exhausted `Budget` no longer throws out of `agentRun()`.** A run whose

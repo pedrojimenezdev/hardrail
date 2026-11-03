@@ -8,6 +8,8 @@ export interface AgentOptions {
   /** Max model→tool→model iterations (default 8). A runaway agent is a bill. */
   maxSteps?: number;
   system: string;
+  /** The conversation so far, sent after the system prompt. Never mutated. */
+  messages?: ChatMessage[];
   /**
    * Callback per step — hook for logging/metrics. Return true to stop early.
    */
@@ -75,6 +77,11 @@ export interface AgentRun {
    *  whether the budget was already exhausted when a step began or a step spent
    *  past the ceiling. The loop stops before the next model call. */
   budgetExceeded?: string;
+  /** The history without the system prompt: `opts.messages` plus everything this
+   *  run added. To continue, append a user message and pass it back as `messages`.
+   *  After `"stopped_by_callback"` the last assistant message may have tool calls
+   *  with no results, so do not continue from that history. */
+  messages: ChatMessage[];
 }
 
 /**
@@ -90,7 +97,7 @@ export interface AgentRun {
  */
 export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
   const maxSteps = opts.maxSteps ?? 8;
-  const messages: ChatMessage[] = [{ role: "system", content: opts.system }];
+  const messages: ChatMessage[] = [{ role: "system", content: opts.system }, ...(opts.messages ?? [])];
   const steps: RunStep[] = [];
   let toolErrors = 0;
   let budgetExceeded: string | undefined;
@@ -110,6 +117,7 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
     stopReason: reason,
     toolErrors,
     ...(budgetExceeded ? { budgetExceeded } : {}),
+    messages: messages.slice(1),
   });
 
   for (let step = 0; step < maxSteps; step++) {
