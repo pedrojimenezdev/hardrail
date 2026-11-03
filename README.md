@@ -105,7 +105,7 @@ const budget = new Budget({ maxTokens: 4000, maxCostUsd: 0.2 });
 const run = await agentRun({ llm, tools: [multiply], system, maxSteps: 6, budget });
 
 run.text;       // → "6 times 7 is 42." — the same string agent() would return
-run.stopReason; // "final" | "step_limit" | "stopped_by_callback" | "aborted" | "budget_exceeded"
+run.stopReason; // "final" | "step_limit" | "stopped_by_callback" | "aborted" | "budget_exceeded" | "loop_detected"
 run.costUsd;    // billed or estimated cost across the run, matching budget.spent.cost
 run.usage;      // { input, output, cost } summed over every model call
 run.toolErrors; // calls the model got wrong (the loop kept going and let it correct)
@@ -129,6 +129,22 @@ back can `throw` on `run.stopReason`.
 
 `agent()` still throws on a budget stop and on an aborted signal, as it always
 has; only `agentRun()` turns them into a stop reason.
+
+## Loop guard
+
+A model that keeps asking for the same tool call is only stopped by `maxSteps`
+or the budget — after the money is spent. `maxIdenticalToolCalls` stops the run
+as soon as one call (same name, same arguments) is requested more times than
+allowed:
+
+```ts
+const run = await agentRun({ llm, tools: [multiply], system, maxIdenticalToolCalls: 2 });
+```
+
+The option is off by default. The call that crosses the limit is never run, and
+the run stops with `stopReason: "loop_detected"` and the offending call in
+`repeatedToolCall` (`{ name, arguments, count }`). `agent()` throws a
+`Loop detected` error instead of returning text.
 
 ## Conversations
 

@@ -1,5 +1,5 @@
 import type { LLM, ChatMessage, LLMReply } from "./llm.ts";
-import { executeTool, toolSchema, type Tool } from "./tools.ts";
+import { executeTool, parseToolArgumentsResult, toolSchema, type Tool } from "./tools.ts";
 import type { Budget } from "./budget.ts";
 
 export interface AgentOptions {
@@ -10,6 +10,10 @@ export interface AgentOptions {
   system: string;
   /** The conversation so far, sent after the system prompt. Never mutated. */
   messages?: ChatMessage[];
+  /** Stop the loop when the model requests the same tool call (same name, same
+   *  arguments, ignoring key order and whitespace) more than this many times in
+   *  one run. Off when omitted. Must be an integer >= 1. */
+  maxIdenticalToolCalls?: number;
   /**
    * Callback per step — hook for logging/metrics. Return true to stop early.
    */
@@ -57,7 +61,9 @@ export type StopReason =
    *  was never made. Checked before every step. */
   | "aborted"
   /** The budget was already exhausted when a step began; see `budgetExceeded`. */
-  | "budget_exceeded";
+  | "budget_exceeded"
+  /** A tool call was requested more than `maxIdenticalToolCalls` times; see `repeatedToolCall`. */
+  | "loop_detected";
 
 export interface AgentRun {
   /** The final answer. Empty when the loop stopped before a step produced text,
@@ -82,6 +88,9 @@ export interface AgentRun {
    *  After `"stopped_by_callback"` the last assistant message may have tool calls
    *  with no results, so do not continue from that history. */
   messages: ChatMessage[];
+  /** Set when `stopReason` is `"loop_detected"`: the call that crossed the limit,
+   *  with `count` = how many times it was requested, including that last time. */
+  repeatedToolCall?: { name: string; arguments: string; count: number };
 }
 
 /**
@@ -97,10 +106,16 @@ export interface AgentRun {
  */
 export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
   const maxSteps = opts.maxSteps ?? 8;
+  const maxIdentical = opts.maxIdenticalToolCalls;
+  if (maxIdentical !== undefined && !(Number.isInteger(maxIdentical) && maxIdentical >= 1)) {
+    throw new RangeError("maxIdenticalToolCalls must be an integer >= 1");
+  }
   const messages: ChatMessage[] = [{ role: "system", content: opts.system }, ...(opts.messages ?? [])];
   const steps: RunStep[] = [];
   let toolErrors = 0;
   let budgetExceeded: string | undefined;
+  const callCounts = new Map<string, number>();
+  let repeatedToolCall: { name: string; arguments: string; count: number } | undefined;
 
   const finish = (reason: StopReason, answer: string): AgentRun => ({
     text: reason === "budget_exceeded" ? "" : answer,
@@ -117,6 +132,7 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
     stopReason: reason,
     toolErrors,
     ...(budgetExceeded ? { budgetExceeded } : {}),
+    ...(repeatedToolCall ? { repeatedToolCall } : {}),
     messages: messages.slice(1),
   });
 
@@ -151,6 +167,23 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
     if (!reply.toolCalls?.length) {
       steps.push(record);
       return finish("final", reply.text);
+    }
+
+    if (maxIdentical !== undefined) {
+      for (const tc of reply.toolCalls) {
+        const key = `${tc.name}\u0000${canonicalArguments(tc.arguments)}`;
+        const count = (callCounts.get(key) ?? 0) + 1;
+        callCounts.set(key, count);
+        if (count > maxIdentical && !repeatedToolCall) repeatedToolCall = { name: tc.name, arguments: tc.arguments, count };
+      }
+      if (repeatedToolCall) {
+        // Answer every call of this step without running it, so the history stays valid to continue from.
+        for (const tc of reply.toolCalls) {
+          messages.push({ role: "tool", toolCallId: tc.id, content: JSON.stringify({ ok: false, result: SKIPPED }) });
+        }
+        steps.push(record);
+        return finish("loop_detected", "");
+      }
     }
 
     const toolList = opts.tools ?? ([] as Tool<any, unknown>[]);
@@ -188,13 +221,35 @@ export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
 
 /**
  * The loop alone, for callers that only want the answer. Its contract is
- * unchanged: a budget stop or an aborted signal throws — the `Budget` error
- * itself, or an `AbortError` — rather than being returned as text. Use
+ * unchanged: a budget stop, an aborted signal or a repeated tool call throws —
+ * the `Budget` error itself, an `AbortError`, or a `Loop detected` error —
+ * rather than being returned as text. Use
  * `agentRun()` when you want the stop reason instead of an exception.
  */
 export async function agent(opts: AgentOptions): Promise<string> {
   const run = await agentRun(opts);
   if (run.stopReason === "budget_exceeded") throw new Error(run.budgetExceeded);
+  if (run.stopReason === "loop_detected") {
+    const r = run.repeatedToolCall!;
+    throw new Error(`Loop detected: tool ${r.name} was requested ${r.count} times with the same arguments`);
+  }
   if (run.stopReason === "aborted") throw new DOMException("The operation was aborted.", "AbortError");
   return run.text;
+}
+
+const SKIPPED = "Not run: the loop stopped after repeated identical tool calls.";
+
+/** Arguments in a form where key order and whitespace don't matter. */
+function canonicalArguments(raw: string): string {
+  const parsed = parseToolArgumentsResult(raw);
+  return parsed.ok ? JSON.stringify(sortKeys(parsed.value)) : raw.trim();
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(obj).sort().map((k) => [k, sortKeys(obj[k])]));
+  }
+  return value;
 }
