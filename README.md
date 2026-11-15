@@ -105,12 +105,12 @@ const budget = new Budget({ maxTokens: 4000, maxCostUsd: 0.2 });
 const run = await agentRun({ llm, tools: [multiply], system, maxSteps: 6, budget });
 
 run.text;       // → "6 times 7 is 42." — the same string agent() would return
-run.stopReason; // "final" | "step_limit" | "stopped_by_callback" | "aborted" | "budget_exceeded" | "loop_detected"
+run.stopReason; // "final" | "step_limit" | "stopped_by_callback" | "aborted" | "budget_exceeded" | "loop_detected" | "approval_required"
 run.costUsd;    // billed or estimated cost of the run's model calls
 run.usage;      // { input, output, cost } summed over every model call
 run.toolErrors; // calls the model got wrong (the loop kept going and let it correct)
 run.steps;      // per model call, in order:
-//   { index, ms, usage, costUsd, text, toolCalls: [{ id, name, ok, ms, skipped? }] }
+//   { index, ms, usage, costUsd, text, toolCalls: [{ id, name, ok, ms, skipped?, denied? }] }
 ```
 
 Each step's `costUsd` is the difference in `budget.spent.cost` before and after
@@ -156,6 +156,68 @@ the run stops with `stopReason: "loop_detected"` and the offending call in
 
 The calls of the stopping step appear in `run.steps` with `skipped: true` and are not counted in `toolErrors`; identical calls within one reply count too; counts start at zero for each run, so calls in `messages` passed in from an earlier run are not counted; and a loop stop takes priority over the budget and the step limit for that step.
 
+## Tool approval
+
+Some tools should not run on the model's say-so alone: a refund, an email, a
+delete. Mark the tool with `needsApproval` — `true`, or a function of the
+validated arguments — and the loop asks before it runs:
+
+```ts
+const refund = defineTool<{ orderId: string; amount: number }>({
+  name: "refund",
+  description: "Refund an order",
+  parameters: { type: "object", properties: { orderId: { type: "string" }, amount: { type: "number" } }, required: ["orderId", "amount"] },
+  needsApproval: ({ amount }) => amount > 100, // small refunds go straight through
+  run: ({ orderId, amount }) => issueRefund(orderId, amount),
+});
+```
+
+**Ask inline.** When whoever approves can answer while the run waits — a CLI
+prompt, a policy check — pass `approveToolCall`:
+
+```ts
+const run = await agentRun({
+  llm, tools: [refund], system,
+  approveToolCall: async ({ name, args }) => (await confirm(`Run ${name}(${JSON.stringify(args)})?`)) || { approved: false, reason: "declined by the operator" },
+});
+```
+
+A denied call is not run. The model is told it was denied (with the reason, if
+you give one) and the loop goes on, so it can explain or try something else.
+
+**Pause and resume.** When the approver is a person who answers later — a button
+in a web app, a message in Slack — leave `approveToolCall` out. The run stops
+with `stopReason: "approval_required"` and the waiting calls in
+`pendingApprovals`. Store `run.messages`, show the calls, and when the decision
+arrives pass both back:
+
+```ts
+const run = await agentRun({ llm, tools: [refund], system, messages });
+
+if (run.stopReason === "approval_required") {
+  run.pendingApprovals; // [{ id: "call_1", name: "refund", args: { orderId: "A7", amount: 250 } }]
+  await save(conversationId, run.messages);
+}
+
+// later, in another request:
+const resumed = await agentRun({
+  llm, tools: [refund], system,
+  messages: await load(conversationId),
+  approvals: { call_1: true }, // or false, or { approved: false, reason }
+});
+```
+
+The resumed run settles the waiting calls first, reports them in
+`resumedToolCalls`, then calls the model. Nothing is held in memory between the
+two runs: the history is the whole state, so it survives a restart or a
+different server. Keep that history on your side — the approval is for the call
+as stored, so a client must not be able to change its arguments in between.
+
+The other calls of the paused step run right away, only the gated ones wait. A
+call with unknown or invalid arguments fails as usual without asking anyone.
+Denied calls show up with `denied: true` and are not counted in `toolErrors`.
+`agent()` cannot pause: with no `approveToolCall` it throws `Approval required`.
+
 ## Conversations
 
 Pass the conversation so far as `messages` and the loop sends it after the
@@ -168,8 +230,9 @@ const run = await agentRun({ llm, system, messages: [{ role: "user", content: "W
 const next = await agentRun({ llm, system, messages: [...run.messages, { role: "user", content: "And in Portugal?" }] });
 ```
 
-After a run that stopped with `"stopped_by_callback"`, the last assistant message
-may have tool calls with no results, so do not continue from that history.
+After a run that stopped with `"stopped_by_callback"` or `"approval_required"`,
+the last assistant message may have tool calls with no results. Passing that
+history back is fine: the next run settles those calls before it calls the model.
 
 ## Modules
 
@@ -178,6 +241,7 @@ may have tool calls with no results, so do not continue from that history.
 | `agent()` | The loop: system → model → execute tool calls → append → repeat, capped by `maxSteps` + `Budget` |
 | `agentRun()` | The same loop, returning the answer plus a report: per-step timing, tokens, cost and tool calls, total usage/cost, and why it stopped |
 | `structured()` | JSON out of an LLM, validated, self-corrected on miss (strip fences, re-ask with the error) |
+| `needsApproval` / `approveToolCall` / `approvals` | Human-in-the-loop: gate a tool behind an approval, asked inline or by pausing the run and resuming it later |
 | `defineTool` / `executeTool` | Typed tool registry; the library never trusts model-supplied shapes — JSON validity *and* the declared JSON Schema are both enforced before `run()` sees a call |
 | `validateSchema` | The zero-dependency JSON Schema validator behind tool argument checking — usable standalone |
 | `rag` (`chunk`, `retrieve`, `inMemoryStore`, `groundPrompt`) | Pluggable vector store + deterministic chunker; search is scoped per tenant |
