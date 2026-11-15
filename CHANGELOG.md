@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tool approval — human-in-the-loop for the agent loop.** A tool with
+  `needsApproval` (`true`, or a function of its validated arguments) is not run
+  until someone approves the call. Pass `approveToolCall` to be asked inline, or
+  leave it out and `agentRun()` pauses with `stopReason: "approval_required"`
+  and the waiting calls in `pendingApprovals`; pass `run.messages` back with
+  `approvals` (keyed by call id) to resume. A denied call is answered for the
+  model without running, reported with `denied: true`, and not counted in
+  `toolErrors`. `agent()` throws `Approval required` when it has nobody to ask.
+- **Unanswered tool calls at the end of `messages` are settled first.** A history
+  from a run that paused for approval or was stopped by `onStep` can be passed
+  back: those calls run (or wait for approval) before the model is called, and
+  are reported in `AgentRun.resumedToolCalls`.
+
 - **`maxIdenticalToolCalls` — an opt-in loop guard.** When the model requests the
   same tool call (same name, same arguments, ignoring key order and whitespace)
   more than the allowed number of times in one run, the loop stops before
@@ -21,11 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cost, not just the answer: per-step timing (`ms`), tokens, cost in USD and each
   tool call's outcome (`{ id, name, ok, ms }`), plus totals (`usage`, `costUsd`),
   a `toolErrors` count, and a `stopReason`
-  (`final`, `step_limit`, `stopped_by_callback`, `aborted`, `budget_exceeded`).
-  A step's cost is the change in `budget.spent.cost`, so provider-billed costs are
-  attributed to the step that incurred them; without a `Budget`, it falls back to
-  the provider's billed `usage.cost` when reported. `agent()` keeps its signature
-  and returns `agentRun().text`.
+  (`final`, `step_limit`, `stopped_by_callback`, `aborted`, `budget_exceeded`,
+  `loop_detected`, `approval_required`). A step's cost is what its model call added to
+  `budget.spent.cost`, so provider-billed costs are attributed to the step that
+  incurred them; without a `Budget`, it falls back to the provider's billed
+  `usage.cost` when reported. An abort during a model call ends the run with
+  `"aborted"` and the report of the steps before it; any other model error is
+  rethrown. `agent()` keeps its signature and returns the same text.
 
 - **Conversations across runs — `messages` on the options and on the run report.**
   `AgentOptions.messages` (sent after the system prompt, never mutated) lets a
@@ -36,11 +51,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **An exhausted `Budget` no longer throws out of `agentRun()`.** A run whose
-  budget is at its ceiling — already when a step begins, or after a step's tool
-  calls — stops with `stopReason: "budget_exceeded"`, the `Budget` error in
+  budget is at its ceiling when a step is about to begin stops with
+  `stopReason: "budget_exceeded"`, the `Budget` error's message in
   `budgetExceeded` and an empty `text`, so a request handler can log the reason
-  instead of catching an exception. `agent()` still throws on a budget stop, so
-  its contract is unchanged.
+  instead of catching an exception. `agent()` still throws the `Budget` error
+  itself, at the same point it always has.
+- **`agent()` checks the signal before every step.** A signal that is already
+  aborted, or is aborted while tools run, now throws an `AbortError` before the
+  next model call. Before, the signal was only forwarded to the provider, so an
+  `LLM` that ignored it kept running.
+- **The loop moved to `src/agent/`** (`types`, `loop`, `loop-guard`, `report`).
+  The package's exports are the same, plus the `RepeatedToolCall`,
+  `ToolApproval` and `ToolApprovalRequest` types.
 
 ## [0.4.0] - 2026-10-29
 
