@@ -106,7 +106,7 @@ const run = await agentRun({ llm, tools: [multiply], system, maxSteps: 6, budget
 
 run.text;       // → "6 times 7 is 42." — the same string agent() would return
 run.stopReason; // "final" | "step_limit" | "stopped_by_callback" | "aborted" | "budget_exceeded" | "loop_detected"
-run.costUsd;    // billed or estimated cost across the run, matching budget.spent.cost
+run.costUsd;    // billed or estimated cost of the run's model calls
 run.usage;      // { input, output, cost } summed over every model call
 run.toolErrors; // calls the model got wrong (the loop kept going and let it correct)
 run.steps;      // per model call, in order:
@@ -118,17 +118,25 @@ the call, so provider-billed costs (v0.4.0) are attributed to the step that
 incurred them. `ms` is wall-clock time rounded to milliseconds. With no
 `Budget` passed, a step's cost is the provider's billed `usage.cost` when the
 provider reports one (OpenRouter does); otherwise there are no prices to
-estimate from and `costUsd` is `0`.
+estimate from and `costUsd` is `0`. The report covers the loop's own model
+calls: if a tool spends on the same `Budget` (a nested `agent()`, say), that
+spend counts toward the ceiling but not toward `costUsd`.
 
-When the budget is exhausted — already when a step begins, or during a step —
-the run does not throw. It stops with `stopReason: "budget_exceeded"`, the
-`Budget` error in `budgetExceeded` and an empty `text`, so a request handler can
-log the reason and decide what to return. An aborted signal likewise stops the
-run with `"aborted"` before the next model call. Callers that want an exception
-back can `throw` on `run.stopReason`.
+When the budget is at its ceiling as a step is about to begin — exhausted
+before the run, or spent past by the previous step — the run does not throw. It
+stops before that model call with `stopReason: "budget_exceeded"`, the `Budget`
+error's message in `budgetExceeded` and an empty `text`, so a request handler
+can log the reason and decide what to return. A budget crossed on the last
+allowed step stops nothing, since no model call would follow: the run ends with
+`"step_limit"` and that step's text.
 
-`agent()` still throws on a budget stop and on an aborted signal, as it always
-has; only `agentRun()` turns them into a stop reason.
+An aborted signal likewise stops the run with `"aborted"`, whether it is aborted
+between steps or during a model call, and the steps already paid for stay in the
+report. Any other error from a model call is rethrown as is. Callers that want
+an exception back can `throw` on `run.stopReason`.
+
+`agent()` throws where `agentRun()` reports a stop: the `Budget` error itself on
+a budget stop, and an `AbortError` on an aborted signal.
 
 ## Loop guard
 
