@@ -91,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `require("hardrail")` on any Node 20, not only on releases that can
   `require()` an ES module.
 - **Install from GitHub.** A `prepare` script builds the package, so
-  `github:pedrojimenezdev/railguard-agentkit#<tag>` installs a working copy.
+  `github:pedrojimenezdev/hardrail#<tag>` installs a working copy.
 
 ### Fixed
 
@@ -173,8 +173,8 @@ First release under the `railguard` name.
 - **README** rewritten around the problem railguard solves, with a copy-pasteable
   quickstart and honest positioning against LangChain and the raw provider SDKs.
 
-[0.5.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.5.0
-[0.4.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.4.0
-[0.3.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.3.0
-[0.2.0]: https://github.com/pedrojimenezdev/railguard-agentkit/releases/tag/v0.2.0
+[0.5.0]: https://github.com/pedrojimenezdev/hardrail/releases/tag/v0.5.0
+[0.4.0]: https://github.com/pedrojimenezdev/hardrail/releases/tag/v0.4.0
+[0.3.0]: https://github.com/pedrojimenezdev/hardrail/releases/tag/v0.3.0
+[0.2.0]: https://github.com/pedrojimenezdev/hardrail/releases/tag/v0.2.0
 [0.1.0]: https://github.com/pedrojimenezdev/railguard/releases/tag/v0.1.0

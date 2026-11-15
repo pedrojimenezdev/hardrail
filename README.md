@@ -3,7 +3,7 @@
 > **The agent loop that can't run away with your bill.**
 
 [![npm](https://img.shields.io/npm/v/hardrail.svg)](https://www.npmjs.com/package/hardrail)
-[![CI](https://github.com/pedrojimenezdev/railguard-agentkit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pedrojimenezdev/railguard-agentkit/actions/workflows/ci.yml)
+[![CI](https://github.com/pedrojimenezdev/hardrail/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pedrojimenezdev/hardrail/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/hardrail.svg)](LICENSE)
 
 A small, dependency-free toolkit for building production AI agents in
@@ -301,7 +301,7 @@ compiles the package on install (under pnpm 10, allow it with
 `"pnpm": { "onlyBuiltDependencies": ["hardrail"] }`):
 
 ```bash
-npm i github:pedrojimenezdev/railguard-agentkit#v0.5.0
+npm i github:pedrojimenezdev/hardrail#v0.5.0
 ```
 
 Requires Node.js 20 or newer. It ships both ES modules (`import`) and CommonJS
