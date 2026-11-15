@@ -1,9 +1,11 @@
-import type { ChatMessage, LLMReply, ToolCallResult } from "../llm.ts";
-import { executeTool, toolSchema, type Tool } from "../tools.ts";
+import type { ChatMessage, LLMReply } from "../llm.ts";
+import { toolSchema } from "../tools.ts";
 import type { Budget } from "../budget.ts";
-import { LoopGuard, SKIPPED_RESULT, type RepeatedToolCall } from "./loop-guard.ts";
+import type { ToolApprovalRequest } from "./approval.ts";
+import { LoopGuard, type RepeatedToolCall } from "./loop-guard.ts";
 import { runTotals } from "./report.ts";
-import type { AgentOptions, AgentRun, RunStep, StopReason } from "./types.ts";
+import { settleToolCalls, skipToolCalls, unansweredToolCalls, type ToolCallContext } from "./tool-calls.ts";
+import type { AgentOptions, AgentRun, RunStep, StopReason, ToolCallReport } from "./types.ts";
 
 const DEFAULT_MAX_STEPS = 8;
 
@@ -26,9 +28,11 @@ export interface LoopOutcome {
  *   3. `onStep` — may stop the run
  *   4. no tool calls → that is the final answer
  *   5. loop guard — may stop the run before any of the step's calls run
- *   6. run the tool calls
+ *   6. run the tool calls — one that needs an approval nobody gave pauses the run
  *
- * Running out of steps ends the loop with the last reply's text.
+ * Running out of steps ends the loop with the last reply's text. Before the
+ * first step, tool calls left unanswered at the end of `opts.messages` are
+ * settled the same way as in (6), so a paused run picks up where it stopped.
  */
 export async function runLoop(opts: AgentOptions): Promise<LoopOutcome> {
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
@@ -36,24 +40,46 @@ export async function runLoop(opts: AgentOptions): Promise<LoopOutcome> {
   const system: ChatMessage = { role: "system", content: opts.system };
   const messages: ChatMessage[] = [system, ...(opts.messages ?? [])];
   const steps: RunStep[] = [];
+  const resumedToolCalls: ToolCallReport[] = [];
+  const toolCalls = (reports: ToolCallReport[]): ToolCallContext => ({
+    tools: opts.tools ?? [],
+    messages,
+    reports,
+    approvals: opts.approvals,
+    approveToolCall: opts.approveToolCall,
+  });
 
   const stop = (
     stopReason: StopReason,
     text: string,
-    detail: { cause?: unknown; budgetExceeded?: string; repeatedToolCall?: RepeatedToolCall } = {},
+    detail: {
+      cause?: unknown;
+      budgetExceeded?: string;
+      repeatedToolCall?: RepeatedToolCall;
+      pendingApprovals?: ToolApprovalRequest[];
+    } = {},
   ): LoopOutcome => ({
     run: {
       text,
       steps,
-      ...runTotals(steps),
+      ...runTotals(steps, resumedToolCalls),
       stopReason,
       ...(detail.budgetExceeded !== undefined ? { budgetExceeded: detail.budgetExceeded } : {}),
       // Dropped by identity, not position: `onStep` is handed the live array.
       messages: messages.filter((message) => message !== system),
       ...(detail.repeatedToolCall ? { repeatedToolCall: detail.repeatedToolCall } : {}),
+      ...(detail.pendingApprovals ? { pendingApprovals: detail.pendingApprovals } : {}),
+      ...(resumedToolCalls.length ? { resumedToolCalls } : {}),
     },
     ...(detail.cause !== undefined ? { cause: detail.cause } : {}),
   });
+
+  const unanswered = unansweredToolCalls(messages);
+  if (unanswered.length) {
+    if (opts.signal?.aborted) return stop("aborted", "");
+    const pendingApprovals = await settleToolCalls(unanswered, toolCalls(resumedToolCalls));
+    if (pendingApprovals.length) return stop("approval_required", "", { pendingApprovals });
+  }
 
   let lastText = "";
   for (let index = 0; index < maxSteps; index++) {
@@ -92,11 +118,12 @@ export async function runLoop(opts: AgentOptions): Promise<LoopOutcome> {
 
     const repeatedToolCall = guard?.observe(reply.toolCalls);
     if (repeatedToolCall) {
-      skipToolCalls(reply.toolCalls, step, messages);
+      skipToolCalls(reply.toolCalls, { messages, reports: step.toolCalls });
       return stop("loop_detected", "", { repeatedToolCall });
     }
 
-    await runToolCalls(opts.tools ?? [], reply.toolCalls, step, messages);
+    const pendingApprovals = await settleToolCalls(reply.toolCalls, toolCalls(step.toolCalls));
+    if (pendingApprovals.length) return stop("approval_required", "", { pendingApprovals });
   }
 
   // Nothing follows the last allowed step, so its text is the best answer we have.
@@ -124,33 +151,6 @@ function recordSpend(budget: Budget | undefined, usage: LLMReply["usage"]): numb
   const before = budget.spent.cost;
   budget.record(usage ?? { input: 0, output: 0 });
   return budget.spent.cost - before;
-}
-
-/** Run a step's tool calls in order, reporting each on the step and answering it in the history. */
-async function runToolCalls(
-  tools: Tool<any, unknown>[],
-  calls: ToolCallResult[],
-  step: RunStep,
-  messages: ChatMessage[],
-): Promise<void> {
-  for (const call of calls) {
-    const started = performance.now();
-    const outcome = await executeTool(tools, call.name, call.arguments);
-    step.toolCalls.push({ name: call.name, ok: outcome.ok, ms: elapsedMs(started), id: call.id });
-    messages.push(toolMessage(call.id, outcome.ok, outcome.result));
-  }
-}
-
-/** Answer every call of a step without running it, so the history stays valid to continue from. */
-function skipToolCalls(calls: ToolCallResult[], step: RunStep, messages: ChatMessage[]): void {
-  for (const call of calls) {
-    step.toolCalls.push({ name: call.name, ok: false, ms: 0, id: call.id, skipped: true });
-    messages.push(toolMessage(call.id, false, SKIPPED_RESULT));
-  }
-}
-
-function toolMessage(toolCallId: string, ok: boolean, result: unknown): ChatMessage {
-  return { role: "tool", toolCallId, content: JSON.stringify({ ok, result }) };
 }
 
 function elapsedMs(started: number): number {

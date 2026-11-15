@@ -715,3 +715,202 @@ test("run.messages leaves out the system prompt even when onStep edits the histo
   assert.equal(run.messages.some((m) => m.role === "system"), false);
   assert.deepEqual(run.messages.map((m) => m.content).slice(0, 2), ["pinned", "go"]);
 });
+
+// --- tool approval: needsApproval, approveToolCall, pause and resume -------
+
+// A refund tool that needs approval, and counts how many refunds actually ran.
+function refundTool(needsApproval: boolean | ((args: { amount: number }) => boolean) = true) {
+  const state = { refunded: [] as number[] };
+  const tool = defineTool<{ amount: number }>({
+    name: "refund",
+    description: "refund an order",
+    parameters: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"] },
+    needsApproval,
+    run: ({ amount }) => {
+      state.refunded.push(amount);
+      return `refunded ${amount}`;
+    },
+  });
+  return { tool, state };
+}
+
+const refundCall = (id: string, amount: number): ToolCallResult => ({ id, name: "refund", arguments: JSON.stringify({ amount }) });
+
+test("approveToolCall is asked before a gated tool runs, with the parsed arguments", async () => {
+  const { tool, state } = refundTool();
+  const asked: unknown[] = [];
+  const run = await agentRun({
+    llm: scriptedLLM([{ text: "", toolCalls: [refundCall("1", 40)] }, { text: "refund issued" }]),
+    tools: [tool],
+    system: "s",
+    approveToolCall: async (request) => {
+      asked.push(request);
+      return true;
+    },
+  });
+  assert.deepEqual(asked, [{ id: "1", name: "refund", args: { amount: 40 } }]);
+  assert.deepEqual(state.refunded, [40]);
+  assert.equal(run.text, "refund issued");
+  assert.equal(run.stopReason, "final");
+});
+
+test("a denied call is not run, and the model is told why", async () => {
+  const { tool, state } = refundTool();
+  const { llm, seen } = recordingLLM([{ text: "", toolCalls: [refundCall("1", 900)] }, { text: "I can't refund that." }]);
+  const run = await agentRun({
+    llm,
+    tools: [tool],
+    system: "s",
+    approveToolCall: () => ({ approved: false, reason: "over the refund limit" }),
+  });
+  assert.deepEqual(state.refunded, []);
+  assert.equal(run.text, "I can't refund that.");
+  assert.deepEqual(run.steps[0].toolCalls, [{ name: "refund", ok: false, ms: 0, id: "1", denied: true }]);
+  assert.equal(run.toolErrors, 0, "a denied call is not a tool error");
+  const told = JSON.parse(seen[1].at(-1)!.content);
+  assert.deepEqual(told, { ok: false, result: "Not run: the call was denied. Reason: over the refund limit" });
+});
+
+test("needsApproval as a function gates only the calls it returns true for", async () => {
+  const { tool, state } = refundTool(({ amount }) => amount > 100);
+  let asked = 0;
+  await agentRun({
+    llm: scriptedLLM([{ text: "", toolCalls: [refundCall("1", 20), refundCall("2", 500)] }, { text: "done" }]),
+    tools: [tool],
+    system: "s",
+    approveToolCall: () => {
+      asked++;
+      return false;
+    },
+  });
+  assert.equal(asked, 1, "only the large refund needed approval");
+  assert.deepEqual(state.refunded, [20]);
+});
+
+test("a call with invalid arguments fails without asking for approval", async () => {
+  const { tool } = refundTool();
+  let asked = 0;
+  const run = await agentRun({
+    llm: scriptedLLM([{ text: "", toolCalls: [{ id: "1", name: "refund", arguments: '{"amount":"lots"}' }] }, { text: "done" }]),
+    tools: [tool],
+    system: "s",
+    approveToolCall: () => {
+      asked++;
+      return true;
+    },
+  });
+  assert.equal(asked, 0);
+  assert.equal(run.toolErrors, 1);
+});
+
+test("without approveToolCall a gated call pauses the run, and approvals resume it", async () => {
+  const { tool, state } = refundTool();
+  const first = await agentRun({
+    llm: scriptedLLM([{ text: "", toolCalls: [{ id: "a", name: "noop", arguments: "{}" }, refundCall("b", 40)], usage: { input: 5, output: 5 } }]),
+    tools: [noopTool, tool],
+    system: "s",
+    messages: [{ role: "user", content: "refund my order" }],
+  });
+  assert.equal(first.stopReason, "approval_required");
+  assert.equal(first.text, "");
+  assert.deepEqual(first.pendingApprovals, [{ id: "b", name: "refund", args: { amount: 40 } }]);
+  assert.deepEqual(state.refunded, [], "nothing gated has run yet");
+  assert.deepEqual(
+    first.steps[0].toolCalls.map(({ id, ok }) => ({ id, ok })),
+    [{ id: "a", ok: true }],
+    "the step's ungated call ran",
+  );
+  assert.deepEqual(first.messages.map((m) => m.role), ["user", "assistant", "tool"]);
+
+  // Later — after a human clicked approve — the history goes back in with the decision.
+  const { llm, seen } = recordingLLM([{ text: "Your refund is on its way." }]);
+  const resumed = await agentRun({
+    llm,
+    tools: [noopTool, tool],
+    system: "s",
+    messages: JSON.parse(JSON.stringify(first.messages)),
+    approvals: { b: true },
+  });
+  assert.deepEqual(state.refunded, [40]);
+  assert.equal(resumed.stopReason, "final");
+  assert.equal(resumed.text, "Your refund is on its way.");
+  assert.deepEqual(resumed.resumedToolCalls?.map(({ id, ok }) => ({ id, ok })), [{ id: "b", ok: true }]);
+  assert.equal(resumed.steps.length, 1, "resuming the call is not a model step");
+  // The model sees both calls answered before it is asked to continue.
+  assert.deepEqual(seen[0].filter((m) => m.role === "tool").map((m) => m.toolCallId), ["a", "b"]);
+});
+
+test("resuming with a denial answers the call without running it", async () => {
+  const { tool, state } = refundTool();
+  const first = await agentRun({ llm: scriptedLLM([{ text: "", toolCalls: [refundCall("b", 40)] }]), tools: [tool], system: "s" });
+  const resumed = await agentRun({
+    llm: scriptedLLM([{ text: "Sorry, that was declined." }]),
+    tools: [tool],
+    system: "s",
+    messages: first.messages,
+    approvals: { b: { approved: false, reason: "duplicate request" } },
+  });
+  assert.deepEqual(state.refunded, []);
+  assert.deepEqual(resumed.resumedToolCalls, [{ name: "refund", ok: false, ms: 0, id: "b", denied: true }]);
+  assert.equal(resumed.toolErrors, 0);
+  assert.equal(resumed.text, "Sorry, that was declined.");
+});
+
+test("a resume that leaves a call undecided pauses again without calling the model", async () => {
+  const { tool, state } = refundTool();
+  const first = await agentRun({
+    llm: scriptedLLM([{ text: "", toolCalls: [refundCall("b", 40), refundCall("c", 60)] }]),
+    tools: [tool],
+    system: "s",
+  });
+  assert.equal(first.pendingApprovals?.length, 2);
+
+  const again = await agentRun({
+    llm: { async complete() { throw new Error("must not be called"); } },
+    tools: [tool],
+    system: "s",
+    messages: first.messages,
+    approvals: { b: true },
+  });
+  assert.equal(again.stopReason, "approval_required");
+  assert.deepEqual(again.pendingApprovals, [{ id: "c", name: "refund", args: { amount: 60 } }]);
+  assert.deepEqual(state.refunded, [40]);
+  assert.equal(again.steps.length, 0);
+});
+
+test("approvals only count for the ids given, not for inherited object keys", async () => {
+  const { tool, state } = refundTool();
+  const run = await agentRun({
+    llm: scriptedLLM([{ text: "", toolCalls: [refundCall("constructor", 40)] }]),
+    tools: [tool],
+    system: "s",
+    approvals: {},
+  });
+  assert.equal(run.stopReason, "approval_required");
+  assert.deepEqual(state.refunded, []);
+});
+
+test("agent() throws when a gated call has nobody to ask", async () => {
+  const { tool, state } = refundTool();
+  await assert.rejects(
+    () => agent({ llm: scriptedLLM([{ text: "", toolCalls: [refundCall("1", 40)] }]), tools: [tool], system: "s" }),
+    /Approval required: refund needs approval/,
+  );
+  assert.deepEqual(state.refunded, []);
+});
+
+test("a history stopped by onStep is continued by running its unanswered calls", async () => {
+  const { tool, state } = countingTool();
+  const stopped = await agentRun({
+    llm: scriptedLLM([{ text: "", toolCalls: [{ id: "1", name: "search", arguments: '{"q":"dogs"}' }] }]),
+    tools: [tool],
+    system: "s",
+    onStep: () => true,
+  });
+  assert.equal(state.runs, 0);
+
+  const continued = await agentRun({ llm: scriptedLLM([{ text: "done" }]), tools: [tool], system: "s", messages: stopped.messages });
+  assert.equal(state.runs, 1);
+  assert.equal(continued.text, "done");
+  assert.deepEqual(continued.resumedToolCalls?.map(({ id, ok }) => ({ id, ok })), [{ id: "1", ok: true }]);
+});
