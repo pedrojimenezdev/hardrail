@@ -1,60 +1,48 @@
-import type { LLM, ChatMessage, LLMReply } from "./llm.ts";
-import { executeTool, toolSchema, type Tool } from "./tools.ts";
-import type { Budget } from "./budget.ts";
+import { runLoop } from "./agent/loop.ts";
+import type { AgentOptions, AgentRun } from "./agent/types.ts";
 
-export interface AgentOptions {
-  llm: LLM;
-  tools?: Tool<any, unknown>[];
-  /** Max model→tool→model iterations (default 8). A runaway agent is a bill. */
-  maxSteps?: number;
-  system: string;
-  /**
-   * Callback per step — hook for logging/metrics. Return true to stop early.
-   */
-  onStep?: (step: { step: number; messages: ChatMessage[]; reply: LLMReply }) => boolean | void;
-  /** Budget guardrail — when exhausted, the loop stops before another call. */
-  budget?: Budget;
-  signal?: AbortSignal;
+export type { AgentOptions, AgentRun, RunStep, StopReason, ToolCallReport } from "./agent/types.ts";
+export type { RepeatedToolCall } from "./agent/loop-guard.ts";
+export type { ToolApproval, ToolApprovalRequest } from "./agent/approval.ts";
+
+/**
+ * Run the agent loop and return what it cost: the answer inside a report with
+ * per-step timing, usage and tool calls, plus why the loop stopped.
+ *
+ * A stop is returned, not thrown. An exhausted budget gives
+ * `stopReason: "budget_exceeded"` with the `Budget` error's message in
+ * `budgetExceeded`; an aborted signal gives `"aborted"`, whether it was aborted
+ * between steps or during a model call. Either way the steps already paid for
+ * are in the report. Any other error from the model call is rethrown as is.
+ */
+export async function agentRun(opts: AgentOptions): Promise<AgentRun> {
+  return (await runLoop(opts)).run;
 }
 
 /**
- * The agent loop: system → model → (tool calls) → execute → append → repeat,
- * until the model answers without tool calls, steps run out, or the budget
- * stops it. Deliberately small — the production value is in *what you wrap*
- * (tools + retrieval + cost caps), not a framework.
+ * The same loop, for callers that only want the answer. Where `agentRun()`
+ * reports a stop, this throws: the `Budget` error itself on a budget stop, an
+ * `AbortError` on an aborted signal (the provider's own when the abort landed
+ * during a model call), a `Loop detected` error on a repeated tool call, and an
+ * `Approval required` error when a tool needs an approval and there is no
+ * `approveToolCall` to ask — a run can only pause through `agentRun()`.
  */
 export async function agent(opts: AgentOptions): Promise<string> {
-  const maxSteps = opts.maxSteps ?? 8;
-  const messages: ChatMessage[] = [{ role: "system", content: opts.system }];
-  let final = "";
-
-  for (let step = 0; step < maxSteps; step++) {
-    opts.budget?.check();
-
-    const reply = await opts.llm.complete(messages, {
-      tools: opts.tools?.length ? opts.tools.map(toolSchema) : undefined,
-      signal: opts.signal,
-    });
-    opts.budget?.record(reply.usage ?? { input: 0, output: 0 });
-
-    messages.push({ role: "assistant", content: reply.text, toolCalls: reply.toolCalls });
-    if (opts.onStep?.({ step, messages, reply }) === true) break;
-
-    if (!reply.toolCalls?.length) {
-      final = reply.text;
-      break;
+  const { run, cause } = await runLoop(opts);
+  switch (run.stopReason) {
+    case "budget_exceeded":
+      throw cause;
+    case "aborted":
+      throw cause ?? new DOMException("The operation was aborted.", "AbortError");
+    case "loop_detected": {
+      const { name, count } = run.repeatedToolCall!;
+      throw new Error(`Loop detected: tool ${name} was requested ${count} times with the same arguments`);
     }
-
-    for (const tc of reply.toolCalls) {
-      const outcome = await executeTool(opts.tools ?? ([] as Tool<any, unknown>[]), tc.name, tc.arguments);
-      messages.push({
-        role: "tool",
-        toolCallId: tc.id,
-        content: JSON.stringify({ ok: outcome.ok, result: outcome.result }),
-      });
+    case "approval_required": {
+      const names = run.pendingApprovals!.map((request) => request.name).join(", ");
+      throw new Error(`Approval required: ${names} needs approval. Pass approveToolCall, or use agentRun() to pause and resume`);
     }
-    if (step === maxSteps - 1) final = reply.text;
+    default:
+      return run.text;
   }
-
-  return final;
 }
