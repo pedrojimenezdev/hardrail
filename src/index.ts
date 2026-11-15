@@ -19,7 +19,7 @@ export { validateSchema } from "./schema.ts";
 export type { JSONSchema, JSONSchemaType, SchemaValidation } from "./schema.ts";
 
 export { agent, agentRun } from "./agent.ts";
-export type { AgentOptions, AgentRun, RunStep, StopReason, ToolCallReport } from "./agent.ts";
+export type { AgentOptions, AgentRun, RepeatedToolCall, RunStep, StopReason, ToolCallReport } from "./agent.ts";
 
 export { chunk, groundPrompt, inMemoryStore, retrieve } from "./rag.ts";
 export type { VectorStore, Chunk, RAGOptions } from "./rag.ts";

@@ -615,3 +615,103 @@ test("a loop stop takes priority over the budget for that step", async () => {
   assert.equal(run.stopReason, "loop_detected");
   assert.equal(run.budgetExceeded, undefined);
 });
+
+// --- stops: what is returned, what is thrown -------------------------------
+
+test("a budget crossed on the last allowed step still returns that step's text", async () => {
+  const reply: LLMReply = {
+    text: "partial answer",
+    toolCalls: [{ id: "1", name: "noop", arguments: "{}" }] as ToolCallResult[],
+    usage: { input: 100, output: 100 },
+  };
+  // No model call would follow the last step, so the budget has nothing left to stop.
+  const run = await agentRun({ llm: scriptedLLM([reply]), tools: [noopTool], system: "s", maxSteps: 1, budget: new Budget({ maxTokens: 150 }) });
+  assert.equal(run.stopReason, "step_limit");
+  assert.equal(run.text, "partial answer");
+  assert.equal(run.budgetExceeded, undefined);
+
+  const out = await agent({ llm: scriptedLLM([reply]), tools: [noopTool], system: "s", maxSteps: 1, budget: new Budget({ maxTokens: 150 }) });
+  assert.equal(out, "partial answer", "agent() returns the text, as it did before agentRun() existed");
+});
+
+test("agent() rethrows the Budget's own error", async () => {
+  class TypedBudgetError extends Error {
+    code = "BUDGET";
+  }
+  class TypedBudget extends Budget {
+    check(): void {
+      throw new TypedBudgetError("typed budget stop");
+    }
+  }
+  const llm: LLM = { async complete() { throw new Error("must not be called"); } };
+  await assert.rejects(
+    () => agent({ llm, system: "s", budget: new TypedBudget({}) }),
+    (err: unknown) => err instanceof TypedBudgetError && err.code === "BUDGET",
+  );
+  const run = await agentRun({ llm, system: "s", budget: new TypedBudget({}) });
+  assert.equal(run.budgetExceeded, "typed budget stop");
+});
+
+// A model whose second call is aborted mid-flight, the way a provider's fetch rejects.
+function abortedMidCallLLM(ac: AbortController): LLM {
+  let calls = 0;
+  return {
+    async complete() {
+      calls++;
+      if (calls === 1) {
+        return { text: "", toolCalls: [{ id: "1", name: "noop", arguments: "{}" }] as ToolCallResult[], usage: { input: 10, output: 10, cost: 0.01 } };
+      }
+      ac.abort();
+      throw new DOMException("This operation was aborted", "AbortError");
+    },
+  };
+}
+
+test("an abort during a model call keeps the report of the steps already paid for", async () => {
+  const ac = new AbortController();
+  const run = await agentRun({ llm: abortedMidCallLLM(ac), tools: [noopTool], system: "s", signal: ac.signal });
+  assert.equal(run.stopReason, "aborted");
+  assert.equal(run.text, "");
+  assert.equal(run.steps.length, 1, "the aborted call is not a step; the one before it is");
+  assert.equal(run.costUsd, 0.01);
+  assert.deepEqual(run.messages.map((m) => m.role), ["assistant", "tool"]);
+});
+
+test("agent() rethrows the provider's error when aborted during a model call", async () => {
+  const ac = new AbortController();
+  await assert.rejects(
+    () => agent({ llm: abortedMidCallLLM(ac), tools: [noopTool], system: "s", signal: ac.signal }),
+    (err: unknown) => err instanceof DOMException && err.message === "This operation was aborted",
+  );
+});
+
+test("a model call that fails without an abort throws out of agentRun", async () => {
+  const llm: LLM = { async complete() { throw new Error("502 from provider"); } };
+  await assert.rejects(() => agentRun({ llm, system: "s" }), /502 from provider/);
+});
+
+test("a fractional maxSteps still returns the last step's text", async () => {
+  const llm = scriptedLLM([{ text: "thinking", toolCalls: [{ id: "1", name: "noop", arguments: "{}" }] as ToolCallResult[] }]);
+  const run = await agentRun({ llm, tools: [noopTool], system: "s", maxSteps: 2.5 });
+  assert.equal(run.stopReason, "step_limit");
+  assert.equal(run.steps.length, 3);
+  assert.equal(run.text, "thinking");
+});
+
+test("run.messages leaves out the system prompt even when onStep edits the history", async () => {
+  const llm = scriptedLLM([
+    { text: "", toolCalls: [{ id: "1", name: "noop", arguments: "{}" }] as ToolCallResult[] },
+    { text: "done" },
+  ]);
+  const run = await agentRun({
+    llm,
+    tools: [noopTool],
+    system: "the system prompt",
+    messages: [{ role: "user", content: "go" }],
+    onStep: ({ step, messages }) => {
+      if (step === 0) messages.unshift({ role: "user", content: "pinned" });
+    },
+  });
+  assert.equal(run.messages.some((m) => m.role === "system"), false);
+  assert.deepEqual(run.messages.map((m) => m.content).slice(0, 2), ["pinned", "go"]);
+});
