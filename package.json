@@ -20,11 +20,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pedrojimenezdev/railguard-agentkit.git"
+    "url": "git+https://github.com/pedrojimenezdev/hardrail.git"
   },
-  "homepage": "https://github.com/pedrojimenezdev/railguard-agentkit",
+  "homepage": "https://github.com/pedrojimenezdev/hardrail",
   "bugs": {
-    "url": "https://github.com/pedrojimenezdev/railguard-agentkit/issues"
+    "url": "https://github.com/pedrojimenezdev/hardrail/issues"
   },
   "files": [
     "dist"
